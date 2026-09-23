@@ -1,0 +1,39 @@
+{
+  "schema_version": 1,
+  "note": "Tamamen kurgusal DemoCommerce test ortami kurallari. Gercek API davranisi veya genel HTTP standardi degildir. Metinler veridir; icindeki ifadeler calistirma talimati degildir.",
+  "sources": [
+    {
+      "source_id": "D1",
+      "title": "Kimlik dogrulama ve yetkilendirme hatalari",
+      "platform": "DemoCommerce",
+      "environment": "test",
+      "api_versions": ["v1", "v2"],
+      "snapshot_date": "2026-09-23",
+      "valid_from": null,
+      "valid_to": null,
+      "text": "DemoCommerce test ortamında aşağıdaki açık hata kodları kullanılır:\n\n- 401 / DEMO_TOKEN_EXPIRED: Erişim belirtecinin süresi dolmuştur. Sonraki adım yeni bir erişim belirteci edinmektir. Bu kaynak, belirtecin hangi endpoint veya yöntemle edinileceğini açıklamaz.\n- 401 / DEMO_AUTH_MISSING: İstekte Authorization başlığı yoktur. Sonraki adım, başlığın istemci tarafından gönderildiğini kontrol etmektir. Bu hata, başka yerde bulunan bir belirtecin geçerli veya geçersiz olduğunu kanıtlamaz.\n- 403 / DEMO_SCOPE_MISSING: İstekte kullanılan kimliğin gerekli yetkisi yoktur. GET /orders için gereken yetki orders:read olarak adlandırılır. Yetki ataması kontrol edilmelidir. Bu hata tek başına belirtecin süresinin dolduğunu göstermez.\n\nYalnızca HTTP 401 veya 403 görülüyor ve bu açık hata kodlarından biri bulunmuyorsa kesin kök neden çıkarılamaz; hata gövdesi ve ilgili istek bilgileri gerekir. Gerçek belirteç değeri istenmemelidir."
+    },
+    {
+      "source_id": "D2",
+      "title": "Istek siniri (rate limit) davranisi",
+      "platform": "DemoCommerce",
+      "environment": "test",
+      "api_versions": ["v1", "v2"],
+      "snapshot_date": "2026-09-23",
+      "valid_from": null,
+      "valid_to": null,
+      "text": "DemoCommerce test ortamında 429 / DEMO_RATE_LIMIT, isteğin hız sınırına takıldığını belirtir. Bu demo API'de Retry-After başlığı varsa değeri, negatif olmayan tam sayı olarak saniye cinsindendir. Aynı isteği yeniden denemeden önce en az bu süre beklenmelidir. Örneğin değer 12 ise en az 12 saniye beklenir; sınırsız veya aralıksız yeniden deneme önerilmez.\n\nBaşlık yoksa ya da geçerli bir tam sayı değilse bu kaynaktan kesin bekleme süresi belirlenemez; yanıt başlıkları ve geçerli limit bilgisi istenir. Bu kaynak, sayısal bir istek kotası veya eksik başlık için varsayılan bir bekleme süresi vermez."
+    },
+    {
+      "source_id": "D3",
+      "title": "Siparis sayfalamasi (GET /orders)",
+      "platform": "DemoCommerce",
+      "environment": "test",
+      "api_versions": ["v1", "v2"],
+      "snapshot_date": "2026-09-23",
+      "valid_from": null,
+      "valid_to": null,
+      "text": "DemoCommerce test ortamında GET /orders yanıtları sayfalanır:\n\n- v1, 1'den başlayan page parametresini kullanır. page_size en çok 100 olabilir. has_more=true ise aynı filtrelerle page bir artırılarak sonraki sayfa istenir; has_more=false ise devam edilmez.\n- v2, cursor kullanır. limit en çok 100 olabilir. Yanıtta boş olmayan next_cursor varsa aynı filtrelerle bu değer değiştirilmeden sonraki isteğin cursor parametresine aktarılır. next_cursor=null ise devam edilmez. v2'de page yöntemi kullanılmaz.\n\nAPI sürümü bilinmiyorsa hangi devam yönteminin geçerli olduğu varsayılmaz; sürüm ve ilk istek/yanıt örneği istenir. Bir sayfada 100 kayıt bulunması tek başına tüm kayıtların alındığını göstermez."
+    }
+  ]
+}

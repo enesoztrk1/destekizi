@@ -424,6 +424,44 @@ class ResultDirectoryTest(unittest.TestCase):
             "ilk calismanin sonucu ezilmemeli",
         )
 
+    def test_unexpected_exception_still_writes_partial_summary_and_is_reraised(self) -> None:
+        workspace = make_workspace(real_case_lines(["C01", "C02", "C03"]))
+        self.addCleanup(shutil.rmtree, workspace, True)
+
+        real_observe = run.mechanical_observations
+        calls: list[int] = []
+
+        def fail_on_second_case(content):
+            calls.append(1)
+            if len(calls) == 2:
+                raise RuntimeError("beklenmeyen hata")
+            return real_observe(content)
+
+        with mock.patch.object(run, "mechanical_observations", fail_on_second_case), \
+                FakeOllama([{"kind": "ok"}]) as fake:
+            with self.assertRaisesRegex(RuntimeError, "beklenmeyen hata"):  # yutulmamali
+                run_main(workspace, fake, ["--no-warmup"])
+
+        run_dir = latest_run_dir(workspace)
+        summary = json.loads((run_dir / "summary.json").read_text(encoding="utf-8"))
+        self.assertEqual(summary["calisma_durumu"], "yarida_kesildi")
+        self.assertEqual(summary["planlanan_vaka_sayisi"], 3)
+        self.assertEqual(summary["vaka_sayisi"], 1)
+        self.assertEqual(summary["kesinti"]["istisna_turu"], "RuntimeError")
+        self.assertEqual(summary["kesinti"]["kesildigi_vaka"], "C02")
+        self.assertEqual(summary["sure_ozetine_dahil_vakalar"], ["C01"])
+        self.assertEqual(len(read_records(run_dir)), 1)
+
+    def test_completed_run_is_marked_complete(self) -> None:
+        workspace = make_workspace(real_case_lines(["C01", "C02"]))
+        self.addCleanup(shutil.rmtree, workspace, True)
+        with FakeOllama([{"kind": "ok"}]) as fake:
+            run_main(workspace, fake, ["--no-warmup"])
+        summary = json.loads((latest_run_dir(workspace) / "summary.json").read_text(encoding="utf-8"))
+        self.assertEqual(summary["calisma_durumu"], "tamamlandi")
+        self.assertIsNone(summary["kesinti"])
+        self.assertEqual(summary["planlanan_vaka_sayisi"], 2)
+
     def test_warmup_is_stored_separately_from_case_results(self) -> None:
         workspace = make_workspace(real_case_lines(["C01"]))
         self.addCleanup(shutil.rmtree, workspace, True)

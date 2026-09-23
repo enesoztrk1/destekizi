@@ -589,6 +589,8 @@ def build_summary(
     model: str,
     records: list[dict[str, Any]],
     warmup_result: dict[str, Any] | None = None,
+    planned_cases: int | None = None,
+    interruption: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     ok_records = [r for r in records if r["ok"]]
     failed = [r for r in records if not r["ok"]]
@@ -629,6 +631,9 @@ def build_summary(
         "run_id": run_id,
         "model": model,
         "isinma": warmup_summary(warmup_result),
+        "calisma_durumu": "yarida_kesildi" if interruption else "tamamlandi",
+        "kesinti": interruption,
+        "planlanan_vaka_sayisi": planned_cases if planned_cases is not None else len(records),
         "vaka_sayisi": len(records),
         "teknik_tamamlanan": len(ok_records),
         "teknik_basarisiz": len(failed),
@@ -642,6 +647,12 @@ def build_summary(
         "vaka_bazli": per_case,
         "notlar": RESULT_NOTES,
     }
+
+
+def _write_summary(run_dir: Path, summary: dict[str, Any]) -> None:
+    (run_dir / "summary.json").write_text(
+        json.dumps(summary, ensure_ascii=False, indent=2), encoding="utf-8"
+    )
 
 
 def run_experiment(args: argparse.Namespace) -> int:
@@ -748,41 +759,60 @@ def run_experiment(args: argparse.Namespace) -> int:
     # --- Vakalar: sirayla, her biri yeni mesaj dizisiyle ---
     records: list[dict[str, Any]] = []
     cases_out = run_dir / "cases.jsonl"
-    with cases_out.open("w", encoding="utf-8") as handle:
-        for index, case in enumerate(cases, start=1):
-            messages = build_messages(system_prompt, case, sources)
-            print(f"[{index}/{len(cases)}] {case['case_id']} calisiyor...", flush=True)
+    current_case_id: str | None = None
+    try:
+        with cases_out.open("w", encoding="utf-8") as handle:
+            for index, case in enumerate(cases, start=1):
+                current_case_id = case["case_id"]
+                messages = build_messages(system_prompt, case, sources)
+                print(f"[{index}/{len(cases)}] {case['case_id']} calisiyor...", flush=True)
 
-            started_at_utc = _utc_now()  # istekten ONCE alinir
-            result = chat_once(args.host, args.model, messages, options, args.timeout)
-            record = {
-                "case_id": case["case_id"],
-                "api_version": case.get("api_version"),
-                "source_ids": list(case["source_ids"]),
-                "model": args.model,
-                "started_at_utc": started_at_utc,
-                "request_options": options,
-                "messages": messages,
-                **result,
-                "mekanik_gozlem": mechanical_observations(result.get("content")),
-            }
-            handle.write(json.dumps(record, ensure_ascii=False) + "\n")
-            handle.flush()
-            records.append(record)
+                started_at_utc = _utc_now()  # istekten ONCE alinir
+                result = chat_once(args.host, args.model, messages, options, args.timeout)
+                record = {
+                    "case_id": case["case_id"],
+                    "api_version": case.get("api_version"),
+                    "source_ids": list(case["source_ids"]),
+                    "model": args.model,
+                    "started_at_utc": started_at_utc,
+                    "request_options": options,
+                    "messages": messages,
+                    **result,
+                    "mekanik_gozlem": mechanical_observations(result.get("content")),
+                }
+                handle.write(json.dumps(record, ensure_ascii=False) + "\n")
+                handle.flush()
+                records.append(record)
 
-            if result["ok"]:
-                total = (result["metrics"] or {}).get("total_duration_s")
-                print(
-                    f"    tamam | istemci {result['client_elapsed_s']} s "
-                    f"| sunucu total {total} s | eval_count {(result['metrics'] or {}).get('eval_count')}"
-                )
-            else:
-                print(f"    BASARISIZ | tur: {result['failure_kind']} | {result['error']}")
+                if result["ok"]:
+                    total = (result["metrics"] or {}).get("total_duration_s")
+                    print(
+                        f"    tamam | istemci {result['client_elapsed_s']} s "
+                        f"| sunucu total {total} s | eval_count {(result['metrics'] or {}).get('eval_count')}"
+                    )
+                else:
+                    print(f"    BASARISIZ | tur: {result['failure_kind']} | {result['error']}")
+    except BaseException as exc:
+        # Beklenmeyen istisna (Ctrl+C dahil): o ana kadarki ozet yazilir, istisna yutulmaz.
+        interruption = {
+            "istisna_turu": type(exc).__name__,
+            "mesaj": str(exc)[:500],
+            "kesildigi_vaka": current_case_id,
+            "calistirilan_vaka_sayisi": len(records),
+        }
+        _write_summary(
+            run_dir,
+            build_summary(run_id, args.model, records, warmup_result, len(cases), interruption),
+        )
+        print(
+            f"HATA: calisma {current_case_id} vakasinda yarida kesildi ({type(exc).__name__}); "
+            f"{len(records)}/{len(cases)} vakanin ozeti yazildi: {run_dir / 'summary.json'}",
+            file=sys.stderr,
+        )
+        raise
 
-    summary = build_summary(run_id, args.model, records, warmup_result)
-    (run_dir / "summary.json").write_text(
-        json.dumps(summary, ensure_ascii=False, indent=2), encoding="utf-8"
-    )
+    summary = build_summary(run_id, args.model, records, warmup_result, len(cases))
+    _write_summary(run_dir, summary)
 
     print("")
     print(f"Sonuc dizini: {run_dir}")

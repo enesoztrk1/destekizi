@@ -1,0 +1,38 @@
+name: tests
+
+# Sahte HTTP servisine karşı çalışan davranış testleri.
+# SINIR: CI ortamında Ollama, model veya GPU YOKTUR. Gerçek model gerektiren
+# hiçbir adım burada çalışmaz; bu iş akışı model kalitesi veya gerçek model
+# süreleri hakkında bir şey göstermez.
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  unittest:
+    name: unittest (${{ matrix.os }}, Python 3.12)
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        # Proje Windows'ta geliştiriliyor; Windows bilinçli olarak matriste.
+        os: [ubuntu-latest, windows-latest]
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      # Bağımlılık kurulumu yok: proje yalnızca Python standart kütüphanesini kullanır.
+
+      - name: Veri doğrulaması (modele istek göndermez)
+        run: python experiments/first_model/run.py --validate-only
+
+      - name: Davranış testleri
+        run: python -m unittest discover -s experiments/first_model/tests -p "test_*.py" -v

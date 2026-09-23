@@ -28,8 +28,11 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+import rules_mode  # A modu: kural tabanli temel yontem (ayni dizindeki modul)
+
 RUNNER_PATH = Path(__file__).resolve()
 HERE = RUNNER_PATH.parent
+RULES_PATH = Path(rules_mode.__file__).resolve()
 
 DEFAULT_HOST = "http://localhost:11434"
 DEFAULT_MODEL = "qwen3:4b-instruct-2507-q4_K_M"
@@ -64,6 +67,13 @@ RESULT_NOTES = [
     "Model suresi icin sunucu olcumlerine bakin.",
     "run_meta.json icindeki api_version_istek_suresi_s tek bir /api/version isteginin "
     "suresidir; istemci surelerinden cikarilacak sabit bir deger degildir.",
+]
+
+A_MODE_NOTES = [
+    "A modu: kural tabanli, deterministik temel yontem (rules_mode.py).",
+    "Ollama'ya istek gonderilmez; on kontrol, isinma ve model cagrisi atlanir.",
+    "Model olcumleri (token, sunucu sureleri) null'dir; client_elapsed_s kural suresidir.",
+    "Kurallar yalnizca docs.json D1-D3 metinlerinden turetilmistir.",
 ]
 
 WARMUP_MESSAGES = [
@@ -544,9 +554,11 @@ def mechanical_observations(content: str | None) -> dict[str, Any]:
 # --------------------------------------------------------------------------
 
 
-def make_run_id() -> str:
+def make_run_id(mode: str = "C") -> str:
+    """C modunun adi degismez; A modu dizin adinda '-A-' ile ayirt edilir."""
     stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
-    return f"{stamp}-{uuid.uuid4().hex[:6]}"
+    marker = "-A" if mode == "A" else ""
+    return f"{stamp}{marker}-{uuid.uuid4().hex[:6]}"
 
 
 def _utc_now() -> str:
@@ -558,14 +570,17 @@ def _stats(values: list[float]) -> dict[str, float] | None:
         return None
     return {
         "adet": len(values),
-        "medyan": round(statistics.median(values), 3),
-        "min": round(min(values), 3),
-        "max": round(max(values), 3),
+        # 6 basamak: A modunun mikrosaniye duzeyindeki sureleri 0.0'a yuvarlanmasin.
+        "medyan": round(statistics.median(values), 6),
+        "min": round(min(values), 6),
+        "max": round(max(values), 6),
     }
 
 
-def warmup_summary(warmup_result: dict[str, Any] | None) -> dict[str, Any]:
+def warmup_summary(warmup_result: dict[str, Any] | None, mode: str = "C") -> dict[str, Any]:
     """Isinmanin durumu. Isinma hicbir kosulda vaka istatistiklerine girmez."""
+    if mode == "A":
+        return {"durum": "uygulanamaz", "failure_kind": None, "not": None}
     if warmup_result is None:
         return {
             "durum": "atlandi",
@@ -591,6 +606,7 @@ def build_summary(
     warmup_result: dict[str, Any] | None = None,
     planned_cases: int | None = None,
     interruption: dict[str, Any] | None = None,
+    mode: str = "C",
 ) -> dict[str, Any]:
     ok_records = [r for r in records if r["ok"]]
     failed = [r for r in records if not r["ok"]]
@@ -629,8 +645,9 @@ def build_summary(
 
     return {
         "run_id": run_id,
+        "mod": mode,
         "model": model,
-        "isinma": warmup_summary(warmup_result),
+        "isinma": warmup_summary(warmup_result, mode),
         "calisma_durumu": "yarida_kesildi" if interruption else "tamamlandi",
         "kesinti": interruption,
         "planlanan_vaka_sayisi": planned_cases if planned_cases is not None else len(records),
@@ -674,14 +691,18 @@ def run_experiment(args: argparse.Namespace) -> int:
         print("--validate-only: model istegi gonderilmedi.")
         return 0
 
-    preflight_info = preflight(args.host, args.model)
-    metadata = fetch_model_metadata(args.host, args.model)
-    print(
-        f"Ollama {preflight_info['ollama_version']} | model {args.model} "
-        f"| kisa kimlik {preflight_info['model_short_id']}"
-    )
+    mode = args.mode
+    if mode == "C":
+        preflight_info = preflight(args.host, args.model)
+        metadata = fetch_model_metadata(args.host, args.model)
+        print(
+            f"Ollama {preflight_info['ollama_version']} | model {args.model} "
+            f"| kisa kimlik {preflight_info['model_short_id']}"
+        )
+    else:
+        print("A modu: kural tabanli temel yontem. Ollama'ya istek gonderilmez.")
 
-    run_id = make_run_id()
+    run_id = make_run_id(mode)
     run_dir = Path(args.results_root).resolve() / run_id
     try:
         run_dir.mkdir(parents=True, exist_ok=False)  # mevcut sonuclar asla ezilmez
@@ -692,47 +713,77 @@ def run_experiment(args: argparse.Namespace) -> int:
 
     options = {"num_ctx": args.num_ctx, "num_predict": args.num_predict}
 
-    run_meta = {
-        "run_id": run_id,
-        "started_at_utc": _utc_now(),
-        "model": args.model,
-        "host": args.host,
-        "options": options,
-        "stream": False,
-        "request_timeout_s": args.timeout,
-        "auto_retry": 0,
-        "concurrency": 1,
-        "ayar_notlari": SETTINGS_NOTES,
-        "girdi_dosyalari": {
-            "prompt.txt": {"path": str(prompt_path), "sha256": sha256_file(prompt_path)},
-            "docs.json": {"path": str(docs_path), "sha256": sha256_file(docs_path)},
-            "cases.jsonl": {"path": str(cases_path), "sha256": sha256_file(cases_path)},
-        },
-        "calistirici_dosyasi": {
-            "path": str(RUNNER_PATH),
-            "sha256": sha256_file(RUNNER_PATH),
-            "not": "Calisma basinda diskteki run.py dosyasinin ozeti.",
-        },
-        "cevap_anahtari": "expected.jsonl uretim yolunda okunmaz; ozeti bilerek alinmaz.",
-        "ollama_version": preflight_info["ollama_version"],
-        "api_version_istek_suresi_s": preflight_info["api_version_istek_suresi_s"],
-        "api_version_istek_suresi_notu": preflight_info["api_version_istek_suresi_notu"],
-        "model_digest": preflight_info["model_digest"],
-        "model_short_id": preflight_info["model_short_id"],
-        "model_short_id_note": preflight_info["model_short_id_note"],
-        "model_tag_entry": preflight_info["model_tag_entry"],
-        "model_metadata": metadata,
-        "python_version": sys.version,
-        "python_implementation": platform.python_implementation(),
-        "platform": platform.platform(),
+    input_files = {
+        "prompt.txt": {"path": str(prompt_path), "sha256": sha256_file(prompt_path)},
+        "docs.json": {"path": str(docs_path), "sha256": sha256_file(docs_path)},
+        "cases.jsonl": {"path": str(cases_path), "sha256": sha256_file(cases_path)},
     }
+    runner_file = {
+        "path": str(RUNNER_PATH),
+        "sha256": sha256_file(RUNNER_PATH),
+        "not": "Calisma basinda diskteki run.py dosyasinin ozeti.",
+    }
+
+    if mode == "A":
+        run_meta = {
+            "run_id": run_id,
+            "mod": "A",
+            "started_at_utc": _utc_now(),
+            "model": None,
+            "host": None,
+            "options": None,
+            "auto_retry": 0,
+            "concurrency": 1,
+            "ayar_notlari": A_MODE_NOTES,
+            "girdi_dosyalari": input_files,
+            "calistirici_dosyasi": runner_file,
+            "kural_motoru_dosyasi": {
+                "path": str(RULES_PATH),
+                "sha256": sha256_file(RULES_PATH),
+                "not": "Calisma basinda diskteki rules_mode.py dosyasinin ozeti.",
+            },
+            "cevap_anahtari": "expected.jsonl uretim yolunda okunmaz; ozeti bilerek alinmaz.",
+            "python_version": sys.version,
+            "python_implementation": platform.python_implementation(),
+            "platform": platform.platform(),
+        }
+    else:
+        run_meta = {
+            "run_id": run_id,
+            "mod": "C",
+            "started_at_utc": _utc_now(),
+            "model": args.model,
+            "host": args.host,
+            "options": options,
+            "stream": False,
+            "request_timeout_s": args.timeout,
+            "auto_retry": 0,
+            "concurrency": 1,
+            "ayar_notlari": SETTINGS_NOTES,
+            "girdi_dosyalari": input_files,
+            "calistirici_dosyasi": runner_file,
+            "cevap_anahtari": "expected.jsonl uretim yolunda okunmaz; ozeti bilerek alinmaz.",
+            "ollama_version": preflight_info["ollama_version"],
+            "api_version_istek_suresi_s": preflight_info["api_version_istek_suresi_s"],
+            "api_version_istek_suresi_notu": preflight_info["api_version_istek_suresi_notu"],
+            "model_digest": preflight_info["model_digest"],
+            "model_short_id": preflight_info["model_short_id"],
+            "model_short_id_note": preflight_info["model_short_id_note"],
+            "model_tag_entry": preflight_info["model_tag_entry"],
+            "model_metadata": metadata,
+            "python_version": sys.version,
+            "python_implementation": platform.python_implementation(),
+            "platform": platform.platform(),
+        }
     (run_dir / "run_meta.json").write_text(
         json.dumps(run_meta, ensure_ascii=False, indent=2), encoding="utf-8"
     )
 
     # --- Isinma: sonuclardan ve sure ozetinden ayri tutulur ---
     warmup_result: dict[str, Any] | None = None
-    if args.no_warmup:
+    if mode == "A":
+        pass  # A modunda model yok; isinma uygulanamaz.
+    elif args.no_warmup:
         print("Isinma istegi atlandi (--no-warmup).")
     else:
         print("Isinma istegi gonderiliyor...")
@@ -764,19 +815,25 @@ def run_experiment(args: argparse.Namespace) -> int:
         with cases_out.open("w", encoding="utf-8") as handle:
             for index, case in enumerate(cases, start=1):
                 current_case_id = case["case_id"]
-                messages = build_messages(system_prompt, case, sources)
                 print(f"[{index}/{len(cases)}] {case['case_id']} calisiyor...", flush=True)
 
                 started_at_utc = _utc_now()  # istekten ONCE alinir
-                result = chat_once(args.host, args.model, messages, options, args.timeout)
+                if mode == "A":
+                    messages = None  # modele mesaj gonderilmez
+                    result = rules_mode.run_case(case, list(case["source_ids"]))
+                else:
+                    messages = build_messages(system_prompt, case, sources)
+                    result = chat_once(args.host, args.model, messages, options, args.timeout)
                 record = {
                     "case_id": case["case_id"],
+                    "mod": mode,
                     "api_version": case.get("api_version"),
                     "source_ids": list(case["source_ids"]),
-                    "model": args.model,
+                    "model": args.model if mode == "C" else None,
                     "started_at_utc": started_at_utc,
-                    "request_options": options,
+                    "request_options": options if mode == "C" else None,
                     "messages": messages,
+                    "kural_karari": None,
                     **result,
                     "mekanik_gozlem": mechanical_observations(result.get("content")),
                 }
@@ -802,7 +859,9 @@ def run_experiment(args: argparse.Namespace) -> int:
         }
         _write_summary(
             run_dir,
-            build_summary(run_id, args.model, records, warmup_result, len(cases), interruption),
+            build_summary(
+                run_id, run_meta["model"], records, warmup_result, len(cases), interruption, mode
+            ),
         )
         print(
             f"HATA: calisma {current_case_id} vakasinda yarida kesildi ({type(exc).__name__}); "
@@ -811,7 +870,9 @@ def run_experiment(args: argparse.Namespace) -> int:
         )
         raise
 
-    summary = build_summary(run_id, args.model, records, warmup_result, len(cases))
+    summary = build_summary(
+        run_id, run_meta["model"], records, warmup_result, len(cases), None, mode
+    )
     _write_summary(run_dir, summary)
 
     print("")
@@ -831,6 +892,12 @@ def run_experiment(args: argparse.Namespace) -> int:
 def build_arg_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         description="Destekizi ilk yerel model deneyi (10 vaka, 3 kontrollu kaynak)."
+    )
+    parser.add_argument(
+        "--mode",
+        choices=("A", "C"),
+        default="C",
+        help="C: yerel model (varsayilan). A: kural tabanli temel yontem; modele istek gitmez.",
     )
     parser.add_argument("--host", default=DEFAULT_HOST)
     parser.add_argument("--model", default=DEFAULT_MODEL)

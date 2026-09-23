@@ -672,7 +672,12 @@ def run_experiment(args: argparse.Namespace) -> int:
 
     run_id = make_run_id()
     run_dir = Path(args.results_root).resolve() / run_id
-    run_dir.mkdir(parents=True, exist_ok=False)  # mevcut sonuclar asla ezilmez
+    try:
+        run_dir.mkdir(parents=True, exist_ok=False)  # mevcut sonuclar asla ezilmez
+    except FileExistsError as exc:
+        raise ExperimentError(
+            f"Sonuc dizini zaten var: {run_dir}. Mevcut sonuclar ezilmez; calisma durduruldu."
+        ) from exc
 
     options = {"num_ctx": args.num_ctx, "num_predict": args.num_predict}
 

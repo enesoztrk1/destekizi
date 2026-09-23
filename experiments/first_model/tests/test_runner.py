@@ -405,6 +405,25 @@ class ResultDirectoryTest(unittest.TestCase):
         contents = {read_records(d)[0]["content"] for d in run_dirs}
         self.assertEqual(contents, {"birinci", "ikinci"})
 
+    def test_existing_run_directory_is_a_clear_error_not_a_traceback(self) -> None:
+        workspace = make_workspace(real_case_lines(["C01"]))
+        self.addCleanup(shutil.rmtree, workspace, True)
+
+        with mock.patch.object(run, "make_run_id", lambda *a, **k: "SABIT"), \
+                FakeOllama([{"kind": "ok", "content": "birinci"}]) as fake:
+            first_code, _ = run_main(workspace, fake, ["--no-warmup"])
+            first_bytes = (workspace / "results" / "SABIT" / "cases.jsonl").read_bytes()
+            second_code, output = run_main(workspace, fake, ["--no-warmup"])
+
+        self.assertEqual(first_code, 0)
+        self.assertEqual(second_code, 2)
+        self.assertIn("Sonuc dizini zaten var", output)
+        self.assertEqual(len(fake.chat_requests), 1, "ikinci calisma modele istek gondermemeli")
+        self.assertEqual(
+            (workspace / "results" / "SABIT" / "cases.jsonl").read_bytes(), first_bytes,
+            "ilk calismanin sonucu ezilmemeli",
+        )
+
     def test_warmup_is_stored_separately_from_case_results(self) -> None:
         workspace = make_workspace(real_case_lines(["C01"]))
         self.addCleanup(shutil.rmtree, workspace, True)

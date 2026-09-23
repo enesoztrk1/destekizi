@@ -1,0 +1,39 @@
+# Sanal ortamlar
+.venv/
+venv/
+env/
+
+# Python önbellekleri
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+
+# Yerel sır dosyaları
+.env
+.env.*
+*.secret
+secrets/
+
+# Üretilen deney sonuçları (her çalışma yerelde kalır)
+experiments/*/results/
+
+# İstisna: incelemeye açık, kullanıcı adı maskelenmiş örnek koşu. Projenin
+# ölçülmüş iddiaları bu koşuya dayanır; results/ dışarıda kalmaya devam eder.
+!experiments/first_model/results_sample/
+
+# Geliştirme aracı yapılandırması ve çalışma notları (.vscode/ veya .idea/ gibi).
+# Yerel kalır; yayınlanan projenin parçası değildir.
+.claude/
+CLAUDE.md
+docs/DEV_TOOLS.md
+docs/DestekIzi_ClaudeCode_Araclari_ve_Kurulum_Promptlari.md
+
+# Sürüm geçmişi yeniden kurulmadan önce alınan yerel .git yedeği
+.git_yedek/
+
+# Geçici / işletim sistemi dosyaları
+*.log
+*.tmp
+Thumbs.db
+desktop.ini

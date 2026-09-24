@@ -64,10 +64,12 @@ EXPERT_MARKERS = ("uzman",)
 INFO_REQUEST_MARKERS = ("paylaş", "belirtin", "iletin")
 
 HEADINGS = {
-    "bulgular": re.compile(r"^\W*bulgular\W*:?", re.I),
+    # Baslik sozcugunden sonra \b sart: "- Kaynakların ..." gibi bir madde yeni bolum
+    # baslatmasin (Turkce ek almis sozcuk baslik degildir).
+    "bulgular": re.compile(r"^\W*bulgular\b\W*:?", re.I),
     "belirsizlik": re.compile(r"^\W*belirsizlik\b[^:\n]*:?", re.I),
-    "sonraki_adim": re.compile(r"^\W*sonraki\s+ad[ıi]m\W*:?", re.I),
-    "kaynaklar": re.compile(r"^\W*kaynaklar\W*:?", re.I),
+    "sonraki_adim": re.compile(r"^\W*sonraki\s+ad[ıi]m\b\W*:?", re.I),
+    "kaynaklar": re.compile(r"^\W*kaynaklar\b\W*:?", re.I),
 }
 
 LIMITATION = (

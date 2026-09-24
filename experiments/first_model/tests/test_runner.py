@@ -33,6 +33,11 @@ from fake_ollama import FakeOllama  # noqa: E402
 
 # Cevap anahtarinin sizip sizmadigini anlamak icin kullanilan benzersiz isaret.
 SENTINEL = "SENTINEL_CEVAP_ANAHTARI_7F3A9C"
+# Gercek vaka setinin boyutu; veri genisledikce testler sabit sayiya bagli kalmasin.
+REAL_CASE_COUNT = sum(
+    1 for line in (EXPERIMENT_DIR / "cases.jsonl").read_text(encoding="utf-8").splitlines()
+    if line.strip()
+)
 
 # Kaynak metinlerinde yalnizca o kaynakta gecen ayirt edici ifadeler.
 SOURCE_MARKERS = {
@@ -275,7 +280,7 @@ class AnswerKeyIsolationTest(unittest.TestCase):
                 )
         self.assertEqual(code, 0, buffer.getvalue())
         self.assertEqual(hits, [], "calistirici gercek cevap anahtarini acmaya calisti")
-        self.assertEqual(len(fake.chat_requests), 11)  # isinma + 10 vaka
+        self.assertEqual(len(fake.chat_requests), 1 + REAL_CASE_COUNT)  # isinma + her vaka
 
     def test_answer_key_passed_as_input_stops_before_any_request(self) -> None:
         workspace = make_workspace(real_case_lines(["C01"]))
@@ -793,7 +798,7 @@ class ModeATest(unittest.TestCase):
         self.assertEqual(proc.returncode, 0, proc.stdout + proc.stderr)
         run_dirs = list((other_cwd / "results").iterdir())
         self.assertEqual(len(run_dirs), 1)
-        self.assertEqual(len(read_records(run_dirs[0])), 10)
+        self.assertEqual(len(read_records(run_dirs[0])), REAL_CASE_COUNT)
 
 class TimestampAndMetadataTest(unittest.TestCase):
     def test_started_at_is_taken_before_the_request_on_success_and_failure(self) -> None:

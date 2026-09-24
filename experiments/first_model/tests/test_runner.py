@@ -452,6 +452,30 @@ class ResultDirectoryTest(unittest.TestCase):
         self.assertEqual(summary["sure_ozetine_dahil_vakalar"], ["C01"])
         self.assertEqual(len(read_records(run_dir)), 1)
 
+    def test_failure_while_writing_partial_summary_does_not_hide_original_error(self) -> None:
+        workspace = make_workspace(real_case_lines(["C01", "C02"]))
+        self.addCleanup(shutil.rmtree, workspace, True)
+
+        def boom(content):
+            raise RuntimeError("asil hata")
+
+        def broken_writer(run_dir, summary):
+            raise OSError("disk dolu")
+
+        with mock.patch.object(run, "mechanical_observations", boom), \
+                mock.patch.object(run, "_write_summary", broken_writer), \
+                FakeOllama([{"kind": "ok"}]) as fake:
+            buffer = io.StringIO()
+            with redirect_stdout(buffer), redirect_stderr(buffer):
+                with self.assertRaisesRegex(RuntimeError, "asil hata"):
+                    run.main(["--host", fake.url, "--model", fake.model,
+                              "--prompt", str(workspace / "prompt.txt"),
+                              "--docs", str(workspace / "docs.json"),
+                              "--cases", str(workspace / "cases.jsonl"),
+                              "--results-root", str(workspace / "results"), "--no-warmup"])
+        self.assertIn("kismi ozet yazilamadi", buffer.getvalue())
+        self.assertIn("disk dolu", buffer.getvalue())
+
     def test_completed_run_is_marked_complete(self) -> None:
         workspace = make_workspace(real_case_lines(["C01", "C02"]))
         self.addCleanup(shutil.rmtree, workspace, True)

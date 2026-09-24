@@ -857,18 +857,27 @@ def run_experiment(args: argparse.Namespace) -> int:
             "kesildigi_vaka": current_case_id,
             "calistirilan_vaka_sayisi": len(records),
         }
-        _write_summary(
-            run_dir,
-            build_summary(
-                run_id, run_meta["model"], records, warmup_result, len(cases), interruption, mode
-            ),
-        )
-        print(
-            f"HATA: calisma {current_case_id} vakasinda yarida kesildi ({type(exc).__name__}); "
-            f"{len(records)}/{len(cases)} vakanin ozeti yazildi: {run_dir / 'summary.json'}",
-            file=sys.stderr,
-        )
-        raise
+        try:
+            _write_summary(
+                run_dir,
+                build_summary(
+                    run_id, run_meta["model"], records, warmup_result, len(cases), interruption,
+                    mode,
+                ),
+            )
+        except Exception as summary_exc:  # noqa: BLE001 - asil istisna asagida yine firlatilir
+            print(
+                f"HATA: kismi ozet yazilamadi ({type(summary_exc).__name__}: {summary_exc}).",
+                file=sys.stderr,
+            )
+        else:
+            print(
+                f"HATA: calisma {current_case_id} vakasinda yarida kesildi "
+                f"({type(exc).__name__}); {len(records)}/{len(cases)} vakanin ozeti yazildi: "
+                f"{run_dir / 'summary.json'}",
+                file=sys.stderr,
+            )
+        raise  # asil istisna; ozet yazimindaki ikinci hata onu gizlemez
 
     summary = build_summary(
         run_id, run_meta["model"], records, warmup_result, len(cases), None, mode

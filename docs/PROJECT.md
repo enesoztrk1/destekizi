@@ -99,6 +99,9 @@ Aşağıdakiler bilinçli olarak yapılmamıştır ve tamamlanmış sayılmamal�
   moduna bağlandı ve sahte servisle test edildi; gerçek modelle koşu yapılmadı.
 - Saat düzeyinde yürürlük ve saat dilimi mantığı (motor yalnızca gün düzeyinde
   çalışır).
+- Büyük dosyaların bölünmesi (500 satır üstü; bölünmesi önerilir, yapılmadı):
+  `run.py` 1046, `tests/test_runner.py` 1009, `eval/run_eval.py` 712,
+  `rules_mode.py` 696 satır.
 - LLM/RAG katkısının kural tabanlı temel yöntemle **insan puanlamasına dayalı**
   karşılaştırılması. Temel yöntem (A modu) ve biçimsel karşılaştırma vardır; kalite
   karşılaştırması yoktur.

@@ -28,10 +28,16 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
-import rules_mode  # A modu: kural tabanli temel yontem (ayni dizindeki modul)
-
 RUNNER_PATH = Path(__file__).resolve()
 HERE = RUNNER_PATH.parent
+
+# `py -P` / `-I`, PYTHONSAFEPATH veya dosya yoluyla yukleme durumunda betik dizini
+# sys.path'e eklenmez; kural motoru yine bu dosyanin yanindaki modulden alinir.
+if str(HERE) not in sys.path:
+    sys.path.insert(0, str(HERE))
+
+import rules_mode  # noqa: E402  A modu: kural tabanli temel yontem (ayni dizindeki modul)
+
 RULES_PATH = Path(rules_mode.__file__).resolve()
 
 DEFAULT_HOST = "http://localhost:11434"

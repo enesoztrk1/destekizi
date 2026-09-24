@@ -14,6 +14,7 @@ import io
 import json
 import os
 import shutil
+import subprocess
 import sys
 import tempfile
 import unittest
@@ -779,6 +780,20 @@ class ModeATest(unittest.TestCase):
         self.assertIsNone(record["kural_karari"])
         self.assertEqual(len(fake.chat_requests), 1)
 
+
+    def test_runs_from_other_cwd_without_script_dir_on_sys_path(self) -> None:
+        # -I: betik dizini sys.path'e eklenmez; rules_mode yine bulunmali.
+        other_cwd = Path(tempfile.mkdtemp(prefix="destekizi_cwd_"))
+        self.addCleanup(shutil.rmtree, other_cwd, True)
+        proc = subprocess.run(
+            [sys.executable, "-I", str(EXPERIMENT_DIR / "run.py"), "--mode", "A",
+             "--results-root", str(other_cwd / "results")],
+            cwd=other_cwd, capture_output=True, text=True, encoding="utf-8", timeout=60,
+        )
+        self.assertEqual(proc.returncode, 0, proc.stdout + proc.stderr)
+        run_dirs = list((other_cwd / "results").iterdir())
+        self.assertEqual(len(run_dirs), 1)
+        self.assertEqual(len(read_records(run_dirs[0])), 10)
 
 class TimestampAndMetadataTest(unittest.TestCase):
     def test_started_at_is_taken_before_the_request_on_success_and_failure(self) -> None:

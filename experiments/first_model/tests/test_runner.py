@@ -850,5 +850,141 @@ class TimestampAndMetadataTest(unittest.TestCase):
         self.assertNotIn("baglanti_ek_yuku_s", meta)
 
 
+# Yalnizca D4 / D5 metninde gecen ayirt edici ifadeler.
+D4_TEXT = "v1 istekleri kimliği X-Api-Key başlığıyla gönderir"
+D5_TEXT = "v2 istekleri kimliği Authorization: Bearer"
+D8_TEXT = "limit en çok 50 olabilir"
+SAMPLE_C_RUN = EXPERIMENT_DIR / "results_sample" / "20260923T214519Z-661fd9" / "cases.jsonl"
+
+
+class ApplicabilityFlowTest(unittest.TestCase):
+    """Uygunluk filtresi modelden ve kural motorundan ONCE calisir."""
+
+    def _run(self, case_ids: list[str], extra: list[str]) -> tuple[Path, FakeOllama, str]:
+        workspace = make_workspace(real_case_lines(case_ids))
+        self.addCleanup(shutil.rmtree, workspace, True)
+        with FakeOllama([{"kind": "ok"}]) as fake:
+            code, output = run_main(workspace, fake, ["--no-warmup"] + extra)
+        self.assertEqual(code, 0, output)
+        return latest_run_dir(workspace), fake, output
+
+    def test_eliminated_source_text_never_reaches_the_model(self) -> None:
+        run_dir, fake, _ = self._run(["C14", "C17"], [])
+        body_c14 = json.dumps(fake.chat_requests[0], ensure_ascii=False)
+        self.assertNotIn(D4_TEXT, body_c14)  # v1 kaynagi, v2 vakasinda elenir
+        self.assertIn(D5_TEXT, body_c14)
+        self.assertIn("D4: UYGUN_DEGIL (surum_uyusmazligi)", body_c14)
+        body_c17 = json.dumps(fake.chat_requests[1], ensure_ascii=False)
+        self.assertNotIn(D8_TEXT, body_c17)  # olay tarihinde yururlukte degil
+        self.assertIn("D3: BELIRSIZ (kaynak_tarihi_yok)", body_c17)
+        self.assertIn("olay_tarihi: 2026-09-20", body_c17)
+
+        c14, c17 = read_records(run_dir)
+        self.assertEqual(c14["kullanilan_kaynaklar"], ["D5"])
+        self.assertEqual(c14["elenen_kaynaklar"], {"D4": "surum_uyusmazligi"})
+        self.assertEqual(c14["belirsiz_kaynaklar"], [])
+        self.assertEqual(c14["degerlendirilen_kaynaklar"]["D5"],
+                         {"durum": "UYGUN", "gerekce": "uygun"})
+        self.assertEqual(c17["kullanilan_kaynaklar"], ["D3"])
+        self.assertEqual(c17["belirsiz_kaynaklar"], ["D3"])
+        self.assertEqual(c17["elenen_kaynaklar"], {"D8": "yururluk_baslamamis"})
+        self.assertTrue(c14["uygunluk_motoru_acik"])
+
+    def test_no_applicability_flag_really_disables_the_filter(self) -> None:
+        run_dir, fake, output = self._run(["C14", "C17"], ["--no-applicability"])
+        self.assertIn("KAPALI", output)
+        body_c14 = json.dumps(fake.chat_requests[0], ensure_ascii=False)
+        self.assertIn(D4_TEXT, body_c14)
+        self.assertNotIn("UYGUNLUK KONTROLU", body_c14)
+        self.assertIn(D8_TEXT, json.dumps(fake.chat_requests[1], ensure_ascii=False))
+        for record in read_records(run_dir):
+            self.assertFalse(record["uygunluk_motoru_acik"])
+            self.assertIsNone(record["degerlendirilen_kaynaklar"])
+            self.assertIsNone(record["elenen_kaynaklar"])
+            self.assertEqual(record["kullanilan_kaynaklar"], record["source_ids"])
+        meta = json.loads((run_dir / "run_meta.json").read_text(encoding="utf-8"))
+        self.assertFalse(meta["uygunluk_motoru"]["acik"])
+
+    def test_disabled_filter_keeps_the_original_message_byte_for_byte(self) -> None:
+        # Motor kapaliyken C01-C10 mesaji, motordan once uretilen ornek kosudakiyle ayni.
+        sample = {r["case_id"]: r["messages"] for r in read_records(SAMPLE_C_RUN.parent)}
+        case_ids = sorted(sample)
+        self.assertEqual(len(case_ids), 10)
+        _, fake, _ = self._run(case_ids, ["--no-applicability"])
+        for case_id, request in zip(case_ids, fake.chat_requests):
+            self.assertEqual(request["messages"], sample[case_id], case_id)
+
+    def test_no_usable_source_means_expert_review_in_both_modes(self) -> None:
+        run_dir, fake, _ = self._run(["C18"], [])
+        body = json.dumps(fake.chat_requests[0], ensure_ascii=False)
+        self.assertNotIn(D5_TEXT, body)
+        self.assertIn("uygun kaynak kalmadi", body)
+        self.assertIn("uzman", body)
+        self.assertEqual(read_records(run_dir)[0]["kullanilan_kaynaklar"], [])
+
+        run_dir, fake, _ = self._run(["C18"], ["--mode", "A"])
+        self.assertEqual(fake.all_requests, [])
+        record = read_records(run_dir)[0]
+        self.assertEqual(record["kural_karari"]["durum"], "uzman_incelemesi")
+        self.assertEqual(record["kural_karari"]["kaynaklar"], [])
+        self.assertIn("surum_uyusmazligi", record["content"])
+        self.assertNotIn("Bearer", record["content"])
+
+    def test_mode_a_without_filter_uses_the_wrong_version_source(self) -> None:
+        run_dir, _, _ = self._run(["C18"], ["--mode", "A", "--no-applicability"])
+        record = read_records(run_dir)[0]
+        self.assertEqual(record["kural_karari"]["kural"], "D5/401/DEMO_AUTH_MISSING")
+        self.assertIsNone(record["degerlendirilen_kaynaklar"])
+
+    def test_uncertain_sources_are_used_and_shown_in_mode_a(self) -> None:
+        run_dir, _, _ = self._run(["C01", "C16", "C17"], ["--mode", "A"])
+        c01, c16, c17 = read_records(run_dir)
+        self.assertEqual(c01["kullanilan_kaynaklar"], ["D1"])
+        self.assertEqual(c01["belirsiz_kaynaklar"], ["D1"])
+        self.assertIn("(tarih_bilinmiyor)", c01["content"].split("Sonraki adım:")[0])
+        self.assertIn("D6, D7", c16["content"])
+        self.assertIn("(kaynak_tarihi_yok)", c17["content"])
+        self.assertEqual(c17["kural_karari"]["kaynaklar"], ["D3"])
+
+    def test_run_meta_records_engine_hash_and_state(self) -> None:
+        run_dir, _, _ = self._run(["C01"], ["--mode", "A"])
+        meta = json.loads((run_dir / "run_meta.json").read_text(encoding="utf-8"))
+        engine = EXPERIMENT_DIR / "applicability.py"
+        self.assertTrue(meta["uygunluk_motoru"]["acik"])
+        self.assertEqual(meta["uygunluk_motoru"]["sha256"],
+                         hashlib.sha256(engine.read_bytes()).hexdigest())
+
+    def test_mode_a_is_deterministic_with_filter(self) -> None:
+        ids = [f"C{n:02d}" for n in range(1, 19)]
+        first, _, _ = self._run(ids, ["--mode", "A"])
+        second, _, _ = self._run(ids, ["--mode", "A"])
+        keys = ("content", "kural_karari", "degerlendirilen_kaynaklar", "kullanilan_kaynaklar",
+                "elenen_kaynaklar", "belirsiz_kaynaklar")
+        strip = lambda d: [{k: r[k] for k in keys} for r in read_records(d)]  # noqa: E731
+        self.assertEqual(strip(first), strip(second))
+
+    def test_invalid_dates_stop_before_any_request(self) -> None:
+        bad_case = json.loads(real_case_lines(["C14"])[0])
+        bad_case["olay_tarihi"] = "15.08.2026"
+        workspace = make_workspace([json.dumps(bad_case, ensure_ascii=False)])
+        self.addCleanup(shutil.rmtree, workspace, True)
+        with FakeOllama([{"kind": "ok"}]) as fake:
+            code, output = run_main(workspace, fake)
+        self.assertEqual(code, 2)
+        self.assertIn("olay_tarihi", output)
+        self.assertEqual(fake.all_requests, [])
+
+        workspace = make_workspace(real_case_lines(["C01"]))
+        self.addCleanup(shutil.rmtree, workspace, True)
+        docs = json.loads((workspace / "docs.json").read_text(encoding="utf-8"))
+        docs["sources"][0]["valid_from"] = "2026-13-01"
+        (workspace / "docs.json").write_text(json.dumps(docs, ensure_ascii=False), encoding="utf-8")
+        with FakeOllama([{"kind": "ok"}]) as fake:
+            code, output = run_main(workspace, fake)
+        self.assertEqual(code, 2)
+        self.assertIn("D1.valid_from", output)
+        self.assertEqual(fake.all_requests, [])
+
+
 if __name__ == "__main__":
     unittest.main()

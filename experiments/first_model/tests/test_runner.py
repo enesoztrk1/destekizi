@@ -925,8 +925,10 @@ class ApplicabilityFlowTest(unittest.TestCase):
         run_dir, fake, _ = self._run(["C18"], ["--mode", "A"])
         self.assertEqual(fake.all_requests, [])
         record = read_records(run_dir)[0]
+        self.assertEqual(record["kural_karari"]["kural"], "uygun-kaynak-yok")
         self.assertEqual(record["kural_karari"]["durum"], "uzman_incelemesi")
         self.assertEqual(record["kural_karari"]["kaynaklar"], [])
+        self.assertIn("hiçbiri olay tarihi ve API sürümü için uygun değil", record["content"])
         self.assertIn("surum_uyusmazligi", record["content"])
         self.assertNotIn("Bearer", record["content"])
 
@@ -943,6 +945,12 @@ class ApplicabilityFlowTest(unittest.TestCase):
         self.assertEqual(c01["belirsiz_kaynaklar"], ["D1"])
         self.assertIn("(tarih_bilinmiyor)", c01["content"].split("Sonraki adım:")[0])
         self.assertIn("D6, D7", c16["content"])
+        # Iki belirsiz kaynagin kurali celisiyor: kural sirasiyla D6 secilmez.
+        self.assertEqual(c16["kural_karari"]["kural"], "belirsiz-kaynak-celiskisi")
+        self.assertEqual(c16["kural_karari"]["durum"], "bilgi_gerekli")
+        self.assertEqual(c16["kural_karari"]["kaynaklar"], ["D6", "D7"])
+        self.assertIn("Olayın tarihini paylaşın.", c16["content"])
+        self.assertNotIn("X-Demo-Retry-Seconds başlığı yok", c16["content"])
         self.assertIn("(kaynak_tarihi_yok)", c17["content"])
         self.assertEqual(c17["kural_karari"]["kaynaklar"], ["D3"])
 
@@ -973,6 +981,17 @@ class ApplicabilityFlowTest(unittest.TestCase):
         self.assertEqual(code, 2)
         self.assertIn("olay_tarihi", output)
         self.assertEqual(fake.all_requests, [])
+
+        for bad_version in ("V2", "", " v2", 2):
+            bad_case = json.loads(real_case_lines(["C14"])[0])
+            bad_case["api_version"] = bad_version
+            workspace = make_workspace([json.dumps(bad_case, ensure_ascii=False)])
+            self.addCleanup(shutil.rmtree, workspace, True)
+            with FakeOllama([{"kind": "ok"}]) as fake:
+                code, output = run_main(workspace, fake)
+            self.assertEqual(code, 2, bad_version)
+            self.assertIn("api_version", output)
+            self.assertEqual(fake.all_requests, [])
 
         workspace = make_workspace(real_case_lines(["C01"]))
         self.addCleanup(shutil.rmtree, workspace, True)

@@ -561,24 +561,63 @@ def decide(case: dict[str, Any], source_ids: list[str] | tuple[str, ...]) -> Dec
     )
 
 
-def _no_usable_source(case: dict[str, Any]) -> Decision:
-    """Uygunluk motoru tum kaynaklari eledi: teshis yok, gerekce gosterilir."""
+def _record_line(case: dict[str, Any]) -> str:
     response = _response(case)
     status = response.get("http_status")
     code = response.get("error_code")
-    kayit = f"HTTP {status}" + (f", {code}" if isinstance(code, str) else "")
+    return f"Yanıt kaydı: HTTP {status}" + (f", {code}." if isinstance(code, str) else ".")
+
+
+def _no_usable_source(case: dict[str, Any]) -> Decision:
+    """Uygunluk motoru tum kaynaklari eledi: teshis yok, gerekce gosterilir."""
     return Decision(
         kural="uygun-kaynak-yok",
         aile=None,
         durum=UZMAN_INCELEMESI,
         bulgular=(
-            f"Yanıt kaydı: {kayit}.",
+            _record_line(case),
             "Vakaya atanan kaynakların hiçbiri olay tarihi ve API sürümü için uygun değil; "
             "teşhis üretilmedi.",
         ),
         belirsizlik=("Uygun bir kaynak olmadan kök neden ve sonraki adım belirlenemez.",),
         sonraki_adim=("Kaydı uzman incelemesine yönlendirin.",),
         kaynaklar=(),
+    )
+
+
+def _uncertain_conflict(case: dict[str, Any], filtre: applicability.Filtre) -> Decision | None:
+    """Birden fazla kullanilabilir kaynagin kurali bu kayda farkli sonuc veriyor ve
+    bunlardan en az biri BELIRSIZ ise hangisinin gecerli oldugu bilinemez. Bu
+    durumda _RULES sirasiyla secim yapilmaz; eksik bilgi istenir."""
+    firing = [
+        (source, decision)
+        for rule, source in _RULES
+        if source in filtre.kullanilan and (decision := rule(case)) is not None
+    ]
+    if len(firing) < 2 or not any(source in filtre.belirsiz for source, _ in firing):
+        return None
+    if len({(d.durum, d.sonraki_adim) for _, d in firing}) == 1:
+        return None  # ayni sonucu veriyorlar; celiski yok
+    sources = tuple(source for source, _ in firing)
+    codes = {filtre.degerlendirilen[s].gerekce for s in sources if s in filtre.belirsiz}
+    asks = []
+    if applicability.TARIH_BILINMIYOR in codes:
+        asks.append("Olayın tarihini paylaşın.")
+    if applicability.SURUM_BILINMIYOR in codes:
+        asks.append("İsteğin API sürümünü paylaşın.")
+    families = {d.aile for _, d in firing}
+    return Decision(
+        kural="belirsiz-kaynak-celiskisi",
+        aile=families.pop() if len(families) == 1 else None,
+        durum=BILGI_GEREKLI if asks else UZMAN_INCELEMESI,
+        bulgular=(
+            _record_line(case),
+            f"{', '.join(sources)} bu kayıt için farklı sonuç veriyor; hangisinin "
+            "geçerli olduğu belirlenemedi.",
+        ),
+        belirsizlik=("Kaynakların uygunluğu doğrulanmadan bir kural seçilmedi.",),
+        sonraki_adim=tuple(asks) or ("Kaydı uzman incelemesine yönlendirin.",),
+        kaynaklar=sources,
     )
 
 
@@ -622,7 +661,8 @@ def run_case(
 
     filtre verilirse (uygunluk motoru acik) kurallar yalnizca kullanilabilir
     kaynaklarla calisir; elenen ve belirsiz kaynaklar metinde gosterilir. Hic
-    kullanilabilir kaynak yoksa teshis uretilmez (uzman_incelemesi).
+    kullanilabilir kaynak yoksa teshis uretilmez (uzman_incelemesi). Belirsiz
+    kaynaklarin kurallari celisiyorsa kural sirasiyla secim yapilmaz.
     """
     started = time.perf_counter()
     if filtre is None:
@@ -630,7 +670,8 @@ def run_case(
     elif not filtre.kullanilan:
         decision = _with_applicability(_no_usable_source(case), filtre)
     else:
-        decision = _with_applicability(decide(case, list(filtre.kullanilan)), filtre)
+        base = _uncertain_conflict(case, filtre) or decide(case, list(filtre.kullanilan))
+        decision = _with_applicability(base, filtre)
     content = render(decision)
     elapsed = time.perf_counter() - started
     return {

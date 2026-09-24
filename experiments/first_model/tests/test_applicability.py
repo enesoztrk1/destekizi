@@ -185,11 +185,21 @@ class SourceValidationTest(unittest.TestCase):
             source(valid_from="2026/06/01"),
             {"source_id": "S", "api_versions": "v2"},
             {"source_id": "S", "api_versions": ["v2", ""]},
+            {"source_id": "S", "api_versions": []},
+            {"source_id": "S", "api_versions": ["V2"]},
         )
         for src in bad:
             with self.subTest(src=src):
                 with self.assertRaises(ValueError):
                     ap.validate_source(src)
+
+    def test_case_version_format(self) -> None:
+        ap.validate_version(None, "alan")
+        ap.validate_version("v2", "alan")
+        for bad in ("V2", "", " v2", "2", 2):
+            with self.subTest(bad=bad):
+                with self.assertRaises(ValueError):
+                    ap.validate_version(bad, "alan")
 
     def test_real_sources_are_valid(self) -> None:
         docs = json.loads((EXPERIMENT_DIR / "docs.json").read_text(encoding="utf-8"))

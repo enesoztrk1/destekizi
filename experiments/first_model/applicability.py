@@ -71,6 +71,7 @@ GEREKCE_ACIKLAMASI = {
 }
 
 _DATE_RE = re.compile(r"\d{4}-\d{2}-\d{2}")
+_VERSION_RE = re.compile(r"v\d+")
 
 
 @dataclass(frozen=True)
@@ -116,6 +117,13 @@ def parse_date(value: Any, field: str) -> date | None:
         raise ValueError(f"{field}: gecersiz tarih {value!r} ({exc})") from exc
 
 
+def validate_version(value: Any, field: str) -> None:
+    """None (bilinmiyor) veya "v<sayi>". "V2", "", " v2" gibi degerler sessizce
+    surum uyusmazligina donusmesin: veri hatasidir."""
+    if value is not None and (not isinstance(value, str) or not _VERSION_RE.fullmatch(value)):
+        raise ValueError(f"{field}: 'v<sayi>' biciminde surum veya null olmali, {value!r} geldi")
+
+
 def validate_source(source: dict[str, Any]) -> None:
     """Kaynagin uygunluk alanlarini dogrular; hatada ValueError."""
     sid = source.get("source_id")
@@ -124,10 +132,11 @@ def validate_source(source: dict[str, Any]) -> None:
     if start is not None and end is not None and not start < end:
         raise ValueError(f"{sid}: valid_from ({start}) valid_to ({end}) tarihinden once olmali")
     versions = source.get("api_versions")
-    if versions is not None and (
-        not isinstance(versions, list) or not all(isinstance(v, str) and v for v in versions)
-    ):
-        raise ValueError(f"{sid}.api_versions: bos olmayan metin listesi veya null olmali")
+    if versions is not None:
+        if not isinstance(versions, list) or not versions:
+            raise ValueError(f"{sid}.api_versions: bos olmayan liste veya null olmali")
+        for version in versions:
+            validate_version(version, f"{sid}.api_versions")
 
 
 def evaluate(source: dict[str, Any], olay_tarihi: date | None, api_version: str | None) -> Karar:

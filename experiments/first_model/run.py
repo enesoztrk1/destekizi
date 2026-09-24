@@ -195,6 +195,7 @@ def load_cases(path: Path) -> list[dict[str, Any]]:
             raise ExperimentError(f"{path} satir {lineno}: vaka kimligi benzersiz degil: {case_id}")
         try:
             applicability.parse_date(case.get("olay_tarihi"), f"{case_id}.olay_tarihi")
+            applicability.validate_version(case.get("api_version"), f"{case_id}.api_version")
         except ValueError as exc:
             raise ExperimentError(f"{path} satir {lineno}: {exc}") from exc
         seen.add(case_id)

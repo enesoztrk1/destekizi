@@ -14,6 +14,7 @@ import io
 import json
 import os
 import shutil
+import subprocess
 import sys
 import tempfile
 import unittest
@@ -405,6 +406,87 @@ class ResultDirectoryTest(unittest.TestCase):
         contents = {read_records(d)[0]["content"] for d in run_dirs}
         self.assertEqual(contents, {"birinci", "ikinci"})
 
+    def test_existing_run_directory_is_a_clear_error_not_a_traceback(self) -> None:
+        workspace = make_workspace(real_case_lines(["C01"]))
+        self.addCleanup(shutil.rmtree, workspace, True)
+
+        with mock.patch.object(run, "make_run_id", lambda *a, **k: "SABIT"), \
+                FakeOllama([{"kind": "ok", "content": "birinci"}]) as fake:
+            first_code, _ = run_main(workspace, fake, ["--no-warmup"])
+            first_bytes = (workspace / "results" / "SABIT" / "cases.jsonl").read_bytes()
+            second_code, output = run_main(workspace, fake, ["--no-warmup"])
+
+        self.assertEqual(first_code, 0)
+        self.assertEqual(second_code, 2)
+        self.assertIn("Sonuc dizini zaten var", output)
+        self.assertEqual(len(fake.chat_requests), 1, "ikinci calisma modele istek gondermemeli")
+        self.assertEqual(
+            (workspace / "results" / "SABIT" / "cases.jsonl").read_bytes(), first_bytes,
+            "ilk calismanin sonucu ezilmemeli",
+        )
+
+    def test_unexpected_exception_still_writes_partial_summary_and_is_reraised(self) -> None:
+        workspace = make_workspace(real_case_lines(["C01", "C02", "C03"]))
+        self.addCleanup(shutil.rmtree, workspace, True)
+
+        real_observe = run.mechanical_observations
+        calls: list[int] = []
+
+        def fail_on_second_case(content):
+            calls.append(1)
+            if len(calls) == 2:
+                raise RuntimeError("beklenmeyen hata")
+            return real_observe(content)
+
+        with mock.patch.object(run, "mechanical_observations", fail_on_second_case), \
+                FakeOllama([{"kind": "ok"}]) as fake:
+            with self.assertRaisesRegex(RuntimeError, "beklenmeyen hata"):  # yutulmamali
+                run_main(workspace, fake, ["--no-warmup"])
+
+        run_dir = latest_run_dir(workspace)
+        summary = json.loads((run_dir / "summary.json").read_text(encoding="utf-8"))
+        self.assertEqual(summary["calisma_durumu"], "yarida_kesildi")
+        self.assertEqual(summary["planlanan_vaka_sayisi"], 3)
+        self.assertEqual(summary["vaka_sayisi"], 1)
+        self.assertEqual(summary["kesinti"]["istisna_turu"], "RuntimeError")
+        self.assertEqual(summary["kesinti"]["kesildigi_vaka"], "C02")
+        self.assertEqual(summary["sure_ozetine_dahil_vakalar"], ["C01"])
+        self.assertEqual(len(read_records(run_dir)), 1)
+
+    def test_failure_while_writing_partial_summary_does_not_hide_original_error(self) -> None:
+        workspace = make_workspace(real_case_lines(["C01", "C02"]))
+        self.addCleanup(shutil.rmtree, workspace, True)
+
+        def boom(content):
+            raise RuntimeError("asil hata")
+
+        def broken_writer(run_dir, summary):
+            raise OSError("disk dolu")
+
+        with mock.patch.object(run, "mechanical_observations", boom), \
+                mock.patch.object(run, "_write_summary", broken_writer), \
+                FakeOllama([{"kind": "ok"}]) as fake:
+            buffer = io.StringIO()
+            with redirect_stdout(buffer), redirect_stderr(buffer):
+                with self.assertRaisesRegex(RuntimeError, "asil hata"):
+                    run.main(["--host", fake.url, "--model", fake.model,
+                              "--prompt", str(workspace / "prompt.txt"),
+                              "--docs", str(workspace / "docs.json"),
+                              "--cases", str(workspace / "cases.jsonl"),
+                              "--results-root", str(workspace / "results"), "--no-warmup"])
+        self.assertIn("kismi ozet yazilamadi", buffer.getvalue())
+        self.assertIn("disk dolu", buffer.getvalue())
+
+    def test_completed_run_is_marked_complete(self) -> None:
+        workspace = make_workspace(real_case_lines(["C01", "C02"]))
+        self.addCleanup(shutil.rmtree, workspace, True)
+        with FakeOllama([{"kind": "ok"}]) as fake:
+            run_main(workspace, fake, ["--no-warmup"])
+        summary = json.loads((latest_run_dir(workspace) / "summary.json").read_text(encoding="utf-8"))
+        self.assertEqual(summary["calisma_durumu"], "tamamlandi")
+        self.assertIsNone(summary["kesinti"])
+        self.assertEqual(summary["planlanan_vaka_sayisi"], 2)
+
     def test_warmup_is_stored_separately_from_case_results(self) -> None:
         workspace = make_workspace(real_case_lines(["C01"]))
         self.addCleanup(shutil.rmtree, workspace, True)
@@ -633,6 +715,85 @@ class WarmupStatusTest(unittest.TestCase):
         summary = json.loads((run_dir / "summary.json").read_text(encoding="utf-8"))
         self.assertEqual(summary["isinma"]["durum"], "atlandi")
 
+
+class ModeATest(unittest.TestCase):
+    """A modu: kural tabanli yol; Ollama'ya hicbir istek gitmemeli."""
+
+    def test_mode_a_sends_no_request_at_all(self) -> None:
+        workspace = make_workspace(real_case_lines(["C01", "C05", "C10"]))
+        self.addCleanup(shutil.rmtree, workspace, True)
+
+        with FakeOllama([{"kind": "ok"}]) as fake:
+            code, output = run_main(workspace, fake, ["--mode", "A"])  # isinma acik birakildi
+        self.assertEqual(code, 0, output)
+        self.assertEqual(fake.all_requests, [], "on kontrol, isinma veya model istegi gitmemeli")
+        self.assertEqual(fake.chat_requests, [])
+
+        run_dir = latest_run_dir(workspace)
+        self.assertIn("-A-", run_dir.name)
+        self.assertFalse((run_dir / "warmup.json").exists())
+        meta = json.loads((run_dir / "run_meta.json").read_text(encoding="utf-8"))
+        self.assertEqual(meta["mod"], "A")
+        self.assertIsNone(meta["model"])
+        self.assertEqual(meta["kural_motoru_dosyasi"]["sha256"],
+                         hashlib.sha256(Path(run.rules_mode.__file__).read_bytes()).hexdigest())
+
+        records = read_records(run_dir)
+        self.assertEqual([r["mod"] for r in records], ["A", "A", "A"])
+        for record in records:
+            self.assertTrue(record["ok"])
+            self.assertIsNone(record["metrics"])
+            self.assertIsNone(record["messages"])
+            self.assertIsNone(record["model"])
+            self.assertIsNotNone(record["kural_karari"])
+            self.assertIsInstance(record["client_elapsed_s"], float)
+            self.assertTrue(record["mekanik_gozlem"]["dort_baslik_var"])
+        self.assertEqual(records[2]["kural_karari"]["durum"], "uzman_incelemesi")
+
+        summary = json.loads((run_dir / "summary.json").read_text(encoding="utf-8"))
+        self.assertEqual(summary["mod"], "A")
+        self.assertEqual(summary["isinma"]["durum"], "uygulanamaz")
+        self.assertIsNone(summary["sunucu_total_duration_s"])
+        self.assertEqual(summary["istemci_gecen_sure_s"]["adet"], 3)
+
+    def test_mode_a_full_run_never_opens_the_real_answer_key(self) -> None:
+        results_root = Path(tempfile.mkdtemp(prefix="destekizi_test_"))
+        self.addCleanup(shutil.rmtree, results_root, True)
+        with answer_key_guard() as hits:
+            buffer = io.StringIO()
+            with redirect_stdout(buffer), redirect_stderr(buffer):
+                code = run.main(["--mode", "A", "--results-root", str(results_root)])
+        self.assertEqual(code, 0, buffer.getvalue())
+        self.assertEqual(hits, [])
+
+    def test_default_mode_is_still_c(self) -> None:
+        workspace = make_workspace(real_case_lines(["C01"]))
+        self.addCleanup(shutil.rmtree, workspace, True)
+        with FakeOllama([{"kind": "ok"}]) as fake:
+            code, _ = run_main(workspace, fake, ["--no-warmup"])
+        self.assertEqual(code, 0)
+        run_dir = latest_run_dir(workspace)
+        self.assertNotIn("-A-", run_dir.name)
+        self.assertEqual(json.loads((run_dir / "run_meta.json").read_text(encoding="utf-8"))["mod"], "C")
+        record = read_records(run_dir)[0]
+        self.assertEqual(record["mod"], "C")
+        self.assertIsNone(record["kural_karari"])
+        self.assertEqual(len(fake.chat_requests), 1)
+
+
+    def test_runs_from_other_cwd_without_script_dir_on_sys_path(self) -> None:
+        # -I: betik dizini sys.path'e eklenmez; rules_mode yine bulunmali.
+        other_cwd = Path(tempfile.mkdtemp(prefix="destekizi_cwd_"))
+        self.addCleanup(shutil.rmtree, other_cwd, True)
+        proc = subprocess.run(
+            [sys.executable, "-I", str(EXPERIMENT_DIR / "run.py"), "--mode", "A",
+             "--results-root", str(other_cwd / "results")],
+            cwd=other_cwd, capture_output=True, text=True, encoding="utf-8", timeout=60,
+        )
+        self.assertEqual(proc.returncode, 0, proc.stdout + proc.stderr)
+        run_dirs = list((other_cwd / "results").iterdir())
+        self.assertEqual(len(run_dirs), 1)
+        self.assertEqual(len(read_records(run_dirs[0])), 10)
 
 class TimestampAndMetadataTest(unittest.TestCase):
     def test_started_at_is_taken_before_the_request_on_success_and_failure(self) -> None:

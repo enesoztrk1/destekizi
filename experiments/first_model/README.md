@@ -3,6 +3,12 @@
 Bu paket, yerel `qwen3:4b-instruct-2507-q4_K_M` modelinin Türkçe destek yanıtı
 taslağı üretirken nasıl davrandığını **ölçmek** içindir. Ürün kodu değildir.
 
+İki yol vardır ve aynı dört başlıklı çıktı sözleşmesini kullanırlar:
+
+- **C modu (varsayılan):** yerel model (Ollama).
+- **A modu:** modelden bağımsız, deterministik kural tabanlı temel yöntem
+  (`rules_mode.py`). Ollama'ya hiç istek göndermez.
+
 Deney şartnamesi ve kabul ölçütleri: [`../../docs/EXPERIMENT_SPEC.md`](../../docs/EXPERIMENT_SPEC.md)
 Proje tanımı: [`../../docs/PROJECT.md`](../../docs/PROJECT.md)
 
@@ -26,7 +32,11 @@ results/<run_id>/cases.jsonl   (ham yanıt + ölçümler + hatalar)
 İNSAN değerlendirmesi  →  review_template.md
 ```
 
-`expected.jsonl` bu akışın **dışındadır**. Çalıştırıcı onu okumaz. `run.read_text`
+A modunda `prompt.txt` → Ollama adımı yerine `rules_mode.py` çalışır; kurallar
+yalnızca vakanın yapısal alanlarını ve seçilmiş kaynak kimliklerini kullanır.
+
+`expected.jsonl` üretim akışının **dışındadır**. Çalıştırıcı (`run.py`) ve kural
+motoru onu okumaz; yalnızca değerlendirme betiği (`eval/run_eval.py`) okur. `run.read_text`
 ve `run.sha256_file` şu durumlarda hata verir:
 
 - dosya adı `expected.jsonl` ise (büyük/küçük harf duyarsız);
@@ -46,13 +56,15 @@ yakaladığı da test edilir.
 | --- | --- |
 | `docs.json` | D1–D3 kontrollü kaynak metinleri (kurgusal DemoCommerce test verisi) |
 | `cases.jsonl` | C01–C10; model girdileri + elle seçilmiş `source_ids` |
-| `expected.jsonl` | İnsan değerlendirme anahtarı. **Üretim yoluna girmez.** |
+| `expected.jsonl` | İnsan değerlendirme anahtarı ve `makine_kontrolleri` bloğu. **Üretim yoluna girmez.** |
 | `prompt.txt` | Tek, sürümlenebilir sistem yönergesi (`prompt_version: 1`) |
-| `run.py` | Sıralı çalıştırıcı; süre, token ve hata kaydı tutar |
+| `run.py` | Sıralı çalıştırıcı (`--mode A` veya `C`); süre, token ve hata kaydı tutar |
+| `rules_mode.py` | A modu kural motoru; her kural D1–D3'teki kaynak cümlesine bağlıdır |
+| `eval/run_eval.py` | Sonuç dizinlerini makine kontrolleriyle karşılaştıran rapor betiği; model çağırmaz |
 | `review_template.md` | Boş insan puanlama tablosu ve rubrik |
-| `tests/` | Sahte HTTP servisiyle çalışan davranış testleri |
+| `tests/` | Sahte HTTP servisiyle çalışan davranış testleri, kural motoru ve değerlendirme testleri |
 | `results/` | Her çalışma için ayrı dizin (git'e girmez) |
-| `results_sample/` | İncelemeye açık tek örnek koşu; kullanıcı adı maskelenmiş kopya. Ayrıntılar ve sınırlar: [`NOT.md`](results_sample/20260923T214519Z-661fd9/NOT.md) |
+| `results_sample/` | İncelemeye açık, kullanıcı adı maskelenmiş örnek koşular: C modu ([`NOT.md`](results_sample/20260923T214519Z-661fd9/NOT.md)), A modu ([`NOT.md`](results_sample/20260924T125755Z-A-7b0aaa/NOT.md)) ve ikisinin karşılaştırma raporu ([`AC_karsilastirma.md`](results_sample/AC_karsilastirma.md)) |
 
 ## Ön koşullar
 
@@ -69,6 +81,18 @@ ollama list        # qwen3:4b-instruct-2507-q4_K_M görünmeli
 py -3.12 .\experiments\first_model\run.py
 ```
 
+A modu (kural tabanlı; Ollama gerekmez):
+
+```powershell
+py -3.12 .\experiments\first_model\run.py --mode A
+```
+
+Değerlendirme raporu (bir veya iki sonuç dizini; model çağırmaz):
+
+```powershell
+py -3.12 .\experiments\first_model\eval\run_eval.py <A_sonuc_dizini> <C_sonuc_dizini> --out rapor.md
+```
+
 Yalnızca veri doğrulaması (modele istek göndermeden):
 
 ```powershell
@@ -80,6 +104,75 @@ Testler:
 ```powershell
 py -3.12 -m unittest discover -s .\experiments\first_model\tests -p "test_*.py" -v
 ```
+
+## A modu: kural tabanlı temel yöntem
+
+Amaç, "LLM gerçekten gerekli mi?" sorusu için modelden bağımsız bir karşılaştırma
+noktası sağlamaktır. Kurallar üç sorun ailesini kapsar ve yalnızca D1–D3
+metinlerinden türetilmiştir (her kuralın yanında kaynak cümlesi yorum olarak durur):
+
+| Aile | Koşul | Çıktı |
+| --- | --- | --- |
+| Yetkilendirme (D1) | 401 `DEMO_TOKEN_EXPIRED` / 401 `DEMO_AUTH_MISSING` / 403 `DEMO_SCOPE_MISSING` | D1'deki teşhis ve sonraki adım |
+| Yetkilendirme (D1) | 401/403, açık kod yok veya kod–durum eşleşmiyor | Kök neden yok; hata gövdesi ve istek bilgisi istenir |
+| İstek sınırı (D2) | 429 `DEMO_RATE_LIMIT`, geçerli `Retry-After` | "En az N saniye bekleyin" |
+| İstek sınırı (D2) | `Retry-After` yok veya geçersiz | Kesin süre yok; başlıklar ve limit bilgisi istenir |
+| Sayfalama (D3) | 200 `GET /orders`, v1 / v2 | v1: `page+1` / `has_more`; v2: `next_cursor` değiştirilmeden |
+| Sayfalama (D3) | Sürüm bilinmiyor | Yöntem seçilmez; sürüm ve istek/yanıt örneği istenir |
+| Kapsam dışı | Hiçbiri (ör. 500 `DEMO_UNKNOWN`) veya ilgili kaynak seçilmemiş | Teşhis yok; bilgi istenir, uzman incelemesine yönlendirilir; `Kaynaklar: yok` |
+
+- **Okunan alanlar:** Kural motoru yalnızca yapısal alanları okur. `ticket`,
+  `note` ve `debug_note` gibi serbest metinler çıktıyı etkilemez.
+- **Kaynak seçimi:** Bir kural yalnızca dayandığı kaynak vakada seçilmişse
+  kullanılır.
+- **Determinizm:** Aynı girdi her zaman aynı çıktıyı verir.
+- **Kayıtlar:** A modunda model ölçümleri (token, sunucu süreleri) `null`'dır;
+  `client_elapsed_s` kuralın gerçek süresidir. Her kayıtta `mod` ve
+  `kural_karari` alanları vardır. `run_meta.json` ayrıca `rules_mode.py` özetini
+  (`kural_motoru_dosyasi`) taşır. A koşularının dizin adı `-A-` içerir.
+
+## Değerlendirme betiği ve makine kontrollerinin sınırları
+
+`eval/run_eval.py`, `expected.jsonl` içindeki `makine_kontrolleri` bloğuyla
+(sözleşme: [`EXPERIMENT_SPEC.md`](../../docs/EXPERIMENT_SPEC.md)) şu metrikleri
+mutlak sayıyla raporlar:
+
+- teknik tamamlanma ve başarısızlık türleri,
+- durum doğruluğu ve karışıklık matrisi, aile doğruluğu,
+- gerekli ve yasak kaynak kullanımı,
+- yasak ifade ihlali ve gerekli ifade eksikliği,
+- süre ve token istatistikleri.
+
+İki dizin verilirse iki koşu yan yana ve vaka bazlı eşleştirilmiş farkla
+karşılaştırılır.
+
+Bozuk JSON satırı, yinelenen `case_id` veya geçersiz `makine_kontrolleri`
+(bilinmeyen anahtar, geçersiz değer) sessizce atlanmaz; betik satır numarasıyla
+hata verir ve çıkış kodu 2 ile durur. Cevabı olmayan vaka, yasak kaynak ve
+yasak ifade kontrollerinde "temiz" sayılmaz; paydaya girmez ve raporda
+ayrıca listelenir.
+
+Örnek koşuların karşılaştırması:
+[`results_sample/AC_karsilastirma.md`](results_sample/AC_karsilastirma.md).
+Raporun başındaki elle yazılmış bölüm, sezgiselin C'yi yanlış sınıflandırdığı
+vakaları (C05, C06, C07) yanıt metninden alıntıyla gösterir.
+
+**Sınırlar:**
+
+- Bu metrikler **biçimsel ve kaynak düzeyindedir**. Açıklamanın teknik
+  doğruluğunu, kaynak desteğinin gerçekliğini ve belirsizlik yönetimini ölçmez.
+  Onlar `review_template.md` ile insan tarafından puanlanır.
+- Durum ve aile, her iki mod için de yanıt **metninden** aynı kurallarla
+  türetilir:
+  - Aile yalnızca `Kaynaklar` bölümündeki kimliklerden türetilir.
+  - Durum, `Sonraki adım` bölümündeki sabit işaretlerden türetilir: `uzman`;
+    `paylaş`, `belirtin`, `iletin`. Eşanlamlı ifadeleri kaçırabilir (ör.
+    "istenmelidir").
+- İfade kontrolleri büyük/küçük harf duyarsız alt dize eşleşmesidir. Olumsuz
+  cümle, alıntı veya farklı yazım ("page=2" yerine "page parametresini 2'ye")
+  yanlış sonuç verebilir.
+- A modunun metinleri, işaret listesi ve `makine_kontrolleri` aynı kişi
+  tarafından yazıldı. Karşılaştırma **A lehine yanlı** olabilir.
 
 ## Anlık GPU / model gözlemi kaydetme
 
@@ -125,17 +218,18 @@ gönderilmez; `/api/show` çıktısı `run_meta.json` içine kaydedilir. Ollama
 
 | Dosya | İçerik |
 | --- | --- |
-| `run_meta.json` | Ayarlar, girdi dosyalarının SHA-256 özetleri, çalıştırılan `run.py` dosyasının SHA-256 özeti (`calistirici_dosyasi`), model etiketi + digest + kısa kimlik, Ollama/Python sürümü, model metadata, `api_version_istek_suresi_s` |
+| `run_meta.json` | `mod`, ayarlar, girdi dosyalarının SHA-256 özetleri, çalıştırılan `run.py` dosyasının SHA-256 özeti (`calistirici_dosyasi`), model etiketi + digest + kısa kimlik, Ollama/Python sürümü, model metadata, `api_version_istek_suresi_s` |
 | `warmup.json` | Isınma isteği (süre özetine dahil değil); ısınma atlanırsa oluşmaz |
 | `cases.jsonl` | Vaka başına: gerçekten gönderilen mesajlar, ham API yanıtı, `done`, `done_reason`, `thinking`, token sayıları, süreler, `istemci_eksi_sunucu_total_s`, hata kaydı. `started_at_utc` istek gönderilmeden **önce** alınır |
-| `summary.json` | Isınma durumu (`isinma.durum`: `basarili` / `basarisiz` / `atlandi`), teknik tamamlanma sayısı, başarısızlık türleri, vaka bazlı süreler, tamamlananların medyanı |
+| `summary.json` | `mod`, `calisma_durumu` (`tamamlandi` / `yarida_kesildi`), `planlanan_vaka_sayisi`, `kesinti`, ısınma durumu (`isinma.durum`: `basarili` / `basarisiz` / `atlandi` / A modunda `uygulanamaz`), teknik tamamlanma sayısı, başarısızlık türleri, vaka bazlı süreler, tamamlananların medyanı |
 
 `calistirici_dosyasi` alanı yalnızca bu alanı yazan sürümden sonraki koşularda
 bulunur. Daha eski koşuları hangi `run.py` sürümünün ürettiği sonradan
 doğrulanamaz.
 
-`run_id` benzersizdir (UTC zaman damgası + rastgele ek). Dizin `exist_ok=False`
-ile açılır; **önceki sonuçlar hiçbir koşulda ezilmez.**
+`run_id` benzersizdir (UTC zaman damgası + A modunda `-A` + rastgele ek). Dizin
+`exist_ok=False` ile açılır; **önceki sonuçlar hiçbir koşulda ezilmez.** Dizin
+zaten varsa çalışma açık bir hata mesajıyla ve çıkış kodu 2 ile durur.
 
 ## Başarısızlık türleri
 
@@ -157,7 +251,9 @@ metin, `done=true` ve `done_reason="stop"`. Diğer her durum başarısızlıktı
 süre özetine girmez.
 
 Bir vakanın hatası kaydedilir, kalan vakalar çalışmaya devam eder ve
-`summary.json` yazılır. Başlangıçta sunucu/model bulunamazsa çalışma **hiç
+`summary.json` yazılır. Vaka döngüsünde beklenmeyen bir istisna olursa (Ctrl+C
+dahil) o ana kadarki vakaların özeti `calisma_durumu: "yarida_kesildi"` ile
+yazılır, ardından istisna yutulmadan yeniden fırlatılır. Başlangıçta sunucu/model bulunamazsa çalışma **hiç
 başlamadan** tek hatayla durur.
 
 ## Ölçüm sınırları (önemli)
@@ -205,7 +301,8 @@ başlamadan** tek hatayla durur.
 - Kaynak arama başarısı ve RAG katkısı — kaynaklar her vaka için **elle**
   seçilmiştir (`source_ids`).
 - Tarih/sürüm uygulanabilirliği — sürüm bilgisi vakada açıkça verilmiştir.
-- Kurallı temel yönteme (rule-based baseline) göre kazanç.
+- Kural tabanlı temel yönteme göre **yanıt kalitesi** farkı — A ve C yalnızca
+  biçimsel makine kontrolleriyle karşılaştırıldı; insan puanlaması yapılmadı.
 - Prompt-injection güvenliği — C10 tek bir örnektir, kapsamlı kanıt değildir.
 - Gerçek müşteri verisinde davranış — tüm veri kurgusaldır.
 

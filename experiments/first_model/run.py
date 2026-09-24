@@ -36,9 +36,11 @@ HERE = RUNNER_PATH.parent
 if str(HERE) not in sys.path:
     sys.path.insert(0, str(HERE))
 
+import applicability  # noqa: E402  kaynak surum/yururluk filtresi (ayni dizindeki modul)
 import rules_mode  # noqa: E402  A modu: kural tabanli temel yontem (ayni dizindeki modul)
 
 RULES_PATH = Path(rules_mode.__file__).resolve()
+APPLICABILITY_PATH = Path(applicability.__file__).resolve()
 
 DEFAULT_HOST = "http://localhost:11434"
 DEFAULT_MODEL = "qwen3:4b-instruct-2507-q4_K_M"
@@ -79,7 +81,7 @@ A_MODE_NOTES = [
     "A modu: kural tabanli, deterministik temel yontem (rules_mode.py).",
     "Ollama'ya istek gonderilmez; on kontrol, isinma ve model cagrisi atlanir.",
     "Model olcumleri (token, sunucu sureleri) null'dir; client_elapsed_s kural suresidir.",
-    "Kurallar yalnizca docs.json D1-D3 metinlerinden turetilmistir.",
+    "Kurallar yalnizca docs.json kaynak metinlerinden turetilmistir.",
 ]
 
 WARMUP_MESSAGES = [
@@ -165,6 +167,10 @@ def load_sources(path: Path) -> dict[str, dict[str, Any]]:
             raise ExperimentError(f"{path}: kaynak kimligi benzersiz degil: {source_id}")
         if not (item.get("text") or "").strip():
             raise ExperimentError(f"{path}: {source_id} kaynaginin metni bos.")
+        try:
+            applicability.validate_source(item)
+        except ValueError as exc:
+            raise ExperimentError(f"{path}: {exc}") from exc
         by_id[source_id] = item
     if not by_id:
         raise ExperimentError(f"{path}: hic kaynak bulunamadi.")
@@ -187,6 +193,10 @@ def load_cases(path: Path) -> list[dict[str, Any]]:
             raise ExperimentError(f"{path} satir {lineno}: case_id alani yok.")
         if case_id in seen:
             raise ExperimentError(f"{path} satir {lineno}: vaka kimligi benzersiz degil: {case_id}")
+        try:
+            applicability.parse_date(case.get("olay_tarihi"), f"{case_id}.olay_tarihi")
+        except ValueError as exc:
+            raise ExperimentError(f"{path} satir {lineno}: {exc}") from exc
         seen.add(case_id)
         cases.append(case)
     if not cases:
@@ -213,12 +223,25 @@ def validate_case_sources(cases: list[dict[str, Any]], sources: dict[str, Any]) 
 # --------------------------------------------------------------------------
 
 
-def build_user_message(case: dict[str, Any], sources: dict[str, dict[str, Any]]) -> str:
-    """Yalnizca bu vakanin verisini ve secilmis kaynaklarini iceren kullanici mesaji."""
+def build_user_message(
+    case: dict[str, Any],
+    sources: dict[str, dict[str, Any]],
+    filtre: applicability.Filtre | None = None,
+) -> str:
+    """Yalnizca bu vakanin verisini ve secilmis kaynaklarini iceren kullanici mesaji.
+
+    filtre verilirse (uygunluk motoru acik) yalnizca elenmemis kaynaklarin metni
+    gonderilir; elenen kaynaklarin METNI modele hic gitmez. Motor kapaliyken ve
+    vakada olay_tarihi yokken mesaj, motordan onceki bicimle birebir aynidir.
+    """
     lines: list[str] = []
 
+    source_ids = list(filtre.kullanilan) if filtre is not None else list(case["source_ids"])
     lines.append("### KAYNAKLAR (veri)")
-    for source_id in case["source_ids"]:
+    if not source_ids:
+        lines.append("")
+        lines.append("(Olay tarihi ve API surumu icin uygun kaynak kalmadi.)")
+    for source_id in source_ids:
         doc = sources[source_id]
         versions = ", ".join(doc.get("api_versions") or [])
         lines.append("")
@@ -235,9 +258,25 @@ def build_user_message(case: dict[str, Any], sources: dict[str, dict[str, Any]])
     lines.append(f"vaka_kimligi: {case['case_id']}")
     lines.append(f"platform: {case.get('platform')} | ortam: {case.get('environment')}")
     lines.append(f"api_surumu: {api_version if api_version is not None else 'bilinmiyor'}")
+    if "olay_tarihi" in case:
+        olay = case["olay_tarihi"]
+        lines.append(f"olay_tarihi: {olay if olay is not None else 'bilinmiyor'}")
     lines.append(f"destek_talebi: {case.get('ticket', '')}")
     lines.append("istek_kaydi: " + json.dumps(case.get("request"), ensure_ascii=False))
     lines.append("yanit_kaydi: " + json.dumps(case.get("response"), ensure_ascii=False))
+
+    if filtre is not None:
+        lines.append("")
+        lines.append("### UYGUNLUK KONTROLU (kurallarla tespit edilen bulgular; veri)")
+        for source_id, karar in filtre.degerlendirilen.items():
+            note = {
+                applicability.UYGUN_DEGIL: " Bu kaynak gonderilmedi.",
+                applicability.BELIRSIZ: " Kaynak gonderildi; uygunlugu dogrulanamadi.",
+            }.get(karar.durum, "")
+            lines.append(
+                f"- {source_id}: {karar.durum} ({karar.gerekce}) - "
+                f"{applicability.GEREKCE_ACIKLAMASI[karar.gerekce]}.{note}"
+            )
 
     lines.append("")
     lines.append("### GOREV")
@@ -245,16 +284,29 @@ def build_user_message(case: dict[str, Any], sources: dict[str, dict[str, Any]])
         "Yukaridaki kayda ve yalnizca verilen kaynaklara dayanarak dort baslikli "
         "Turkce yanit taslagini yaz."
     )
+    if filtre is not None and filtre.belirsiz:
+        lines.append(
+            "UYGUNLUK KONTROLU bolumundeki belirsizlikleri 'Belirsizlik / eksik bilgi' "
+            "basliginda belirt."
+        )
+    if filtre is not None and not filtre.kullanilan:
+        lines.append(
+            "Uygun kaynak kalmadigi icin teshis yazma; gerekceyi belirt ve kaydi uzman "
+            "incelemesine yonlendir."
+        )
     return "\n".join(lines)
 
 
 def build_messages(
-    system_prompt: str, case: dict[str, Any], sources: dict[str, dict[str, Any]]
+    system_prompt: str,
+    case: dict[str, Any],
+    sources: dict[str, dict[str, Any]],
+    filtre: applicability.Filtre | None = None,
 ) -> list[dict[str, str]]:
     """Her vaka icin sifirdan mesaj dizisi. Onceki vaka/cevap tasinmaz."""
     return [
         {"role": "system", "content": system_prompt},
-        {"role": "user", "content": build_user_message(case, sources)},
+        {"role": "user", "content": build_user_message(case, sources, filtre)},
     ]
 
 
@@ -707,6 +759,11 @@ def run_experiment(args: argparse.Namespace) -> int:
         )
     else:
         print("A modu: kural tabanli temel yontem. Ollama'ya istek gonderilmez.")
+    print(
+        "Uygunluk motoru: "
+        + ("KAPALI (--no-applicability); kaynaklar filtrelenmez." if args.no_applicability
+           else "acik; kaynaklar surum ve olay tarihine gore filtrelenir.")
+    )
 
     run_id = make_run_id(mode)
     run_dir = Path(args.results_root).resolve() / run_id
@@ -729,6 +786,16 @@ def run_experiment(args: argparse.Namespace) -> int:
         "sha256": sha256_file(RUNNER_PATH),
         "not": "Calisma basinda diskteki run.py dosyasinin ozeti.",
     }
+    applicability_on = not args.no_applicability
+    applicability_meta = {
+        "acik": applicability_on,
+        "path": str(APPLICABILITY_PATH),
+        "sha256": sha256_file(APPLICABILITY_PATH),
+        "not": (
+            "Calisma basinda diskteki applicability.py dosyasinin ozeti. acik=false: "
+            "--no-applicability ile kapatildi; kaynaklar filtrelenmedi."
+        ),
+    }
 
     if mode == "A":
         run_meta = {
@@ -748,6 +815,7 @@ def run_experiment(args: argparse.Namespace) -> int:
                 "sha256": sha256_file(RULES_PATH),
                 "not": "Calisma basinda diskteki rules_mode.py dosyasinin ozeti.",
             },
+            "uygunluk_motoru": applicability_meta,
             "cevap_anahtari": "expected.jsonl uretim yolunda okunmaz; ozeti bilerek alinmaz.",
             "python_version": sys.version,
             "python_implementation": platform.python_implementation(),
@@ -768,6 +836,7 @@ def run_experiment(args: argparse.Namespace) -> int:
             "ayar_notlari": SETTINGS_NOTES,
             "girdi_dosyalari": input_files,
             "calistirici_dosyasi": runner_file,
+            "uygunluk_motoru": applicability_meta,
             "cevap_anahtari": "expected.jsonl uretim yolunda okunmaz; ozeti bilerek alinmaz.",
             "ollama_version": preflight_info["ollama_version"],
             "api_version_istek_suresi_s": preflight_info["api_version_istek_suresi_s"],
@@ -823,18 +892,38 @@ def run_experiment(args: argparse.Namespace) -> int:
                 current_case_id = case["case_id"]
                 print(f"[{index}/{len(cases)}] {case['case_id']} calisiyor...", flush=True)
 
+                # Uygunluk filtresi aramadan ve modelden ONCE calisir.
+                filtre = (
+                    applicability.filter_sources(case, sources, list(case["source_ids"]))
+                    if applicability_on
+                    else None
+                )
                 started_at_utc = _utc_now()  # istekten ONCE alinir
                 if mode == "A":
                     messages = None  # modele mesaj gonderilmez
-                    result = rules_mode.run_case(case, list(case["source_ids"]))
+                    result = rules_mode.run_case(case, list(case["source_ids"]), filtre)
                 else:
-                    messages = build_messages(system_prompt, case, sources)
+                    messages = build_messages(system_prompt, case, sources, filtre)
                     result = chat_once(args.host, args.model, messages, options, args.timeout)
+                uygunluk = (
+                    filtre.kayit()
+                    if filtre is not None
+                    else {
+                        # Motor kapali: karar verilmedi; tum kaynaklar kullanildi.
+                        "degerlendirilen_kaynaklar": None,
+                        "kullanilan_kaynaklar": list(case["source_ids"]),
+                        "elenen_kaynaklar": None,
+                        "belirsiz_kaynaklar": None,
+                    }
+                )
                 record = {
                     "case_id": case["case_id"],
                     "mod": mode,
                     "api_version": case.get("api_version"),
+                    "olay_tarihi": case.get("olay_tarihi"),
                     "source_ids": list(case["source_ids"]),
+                    "uygunluk_motoru_acik": applicability_on,
+                    **uygunluk,
                     "model": args.model if mode == "C" else None,
                     "started_at_utc": started_at_utc,
                     "request_options": options if mode == "C" else None,
@@ -906,7 +995,7 @@ def run_experiment(args: argparse.Namespace) -> int:
 
 def build_arg_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
-        description="Destekizi ilk yerel model deneyi (10 vaka, 3 kontrollu kaynak)."
+        description="Destekizi ilk yerel model deneyi (kontrollu kaynaklar ve gelistirme vakalari)."
     )
     parser.add_argument(
         "--mode",
@@ -924,6 +1013,11 @@ def build_arg_parser() -> argparse.ArgumentParser:
     parser.add_argument("--num-predict", type=int, default=DEFAULT_NUM_PREDICT)
     parser.add_argument("--timeout", type=int, default=DEFAULT_TIMEOUT_S)
     parser.add_argument("--no-warmup", action="store_true")
+    parser.add_argument(
+        "--no-applicability",
+        action="store_true",
+        help="Uygunluk motorunu kapatir (ablation): vakanin tum kaynaklari filtresiz kullanilir.",
+    )
     parser.add_argument(
         "--validate-only",
         action="store_true",

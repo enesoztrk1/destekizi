@@ -1,8 +1,14 @@
 """Destekizi - A modu: kural tabanli, deterministik temel yontem.
 
-Modelden bagimsizdir; ag cagrisi yapmaz. Kurallar YALNIZCA docs.json'daki D1-D3
+Modelden bagimsizdir; ag cagrisi yapmaz. Kurallar YALNIZCA docs.json'daki D1-D8
 metinlerinden elle turetilmistir; her kuralin yaninda dayandigi kaynak cumlesi
 yorum olarak durur. Disaridan HTTP bilgisi veya varsayim eklenmez.
+
+Kurallar kaynagin surum ve yururluk bilgisini (api_versions, valid_from,
+valid_to) KONTROL ETMEZ; bu is uygulanabilirlik motorunundur (applicability.py).
+Motor acikken kurallara yalnizca elenmemis kaynaklar gelir; --no-applicability
+ile motor kapatildiginda vakanin tum kaynaklari gelir ve ayni konudaki iki kural
+arasinda _RULES sirasi belirleyicidir.
 
 Girdi: bir vaka kaydi ve o vakanin secilmis kaynak kimlikleri.
 Okunan alanlar yalnizca yapisaldir: response.http_status, response.error_code,
@@ -19,8 +25,10 @@ from __future__ import annotations
 
 import re
 import time
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from typing import Any
+
+import applicability
 
 # Durum ve aile adlari expected.jsonl -> makine_kontrolleri ile ayni sozlukten.
 TASLAK_HAZIR = "taslak_hazir"
@@ -172,6 +180,60 @@ def _rule_auth(case: dict[str, Any]) -> Decision | None:
 
 
 # --------------------------------------------------------------------------
+# D4 / D5 - Surume gore kimlik dogrulama basligi
+# --------------------------------------------------------------------------
+
+
+def _is_auth_missing(case: dict[str, Any]) -> bool:
+    response = _response(case)
+    return response.get("http_status") == 401 and response.get("error_code") == "DEMO_AUTH_MISSING"
+
+
+def _rule_auth_header_v1(case: dict[str, Any]) -> Decision | None:
+    # D4: "v1'de 401 / DEMO_AUTH_MISSING, istekte X-Api-Key basliginin bulunmadigini
+    #      belirtir. Sonraki adim, X-Api-Key basliginin istemci tarafindan
+    #      gonderildigini kontrol etmektir. Gercek anahtar degeri istenmemelidir."
+    if not _is_auth_missing(case):
+        return None
+    return Decision(
+        kural="D4/401/DEMO_AUTH_MISSING",
+        aile=YETKILENDIRME,
+        durum=TASLAK_HAZIR,
+        bulgular=(
+            "Yanıt kaydı: HTTP 401, DEMO_AUTH_MISSING.",
+            "D4'e göre bu kod, istekte X-Api-Key başlığının bulunmadığını belirtir.",
+        ),
+        belirsizlik=("Gerçek anahtar değeri istenmez; başlığın varlığı kontrol edilir.",),
+        sonraki_adim=("X-Api-Key başlığının istemci tarafından gönderildiğini kontrol edin.",),
+        kaynaklar=("D4",),
+    )
+
+
+def _rule_auth_header_v2(case: dict[str, Any]) -> Decision | None:
+    # D5: "v2'de 401 / DEMO_AUTH_MISSING, istekte Bearer semali Authorization basliginin
+    #      bulunmadigini belirtir. Sonraki adim, Authorization basliginin Bearer
+    #      semasiyla gonderildigini kontrol etmektir. ... Gercek belirtec degeri
+    #      istenmemelidir."
+    if not _is_auth_missing(case):
+        return None
+    return Decision(
+        kural="D5/401/DEMO_AUTH_MISSING",
+        aile=YETKILENDIRME,
+        durum=TASLAK_HAZIR,
+        bulgular=(
+            "Yanıt kaydı: HTTP 401, DEMO_AUTH_MISSING.",
+            "D5'e göre bu kod, istekte Bearer şemalı Authorization başlığının "
+            "bulunmadığını belirtir.",
+        ),
+        belirsizlik=("Gerçek belirteç değeri istenmez; başlığın varlığı kontrol edilir.",),
+        sonraki_adim=(
+            "Authorization başlığının Bearer şemasıyla gönderildiğini kontrol edin.",
+        ),
+        kaynaklar=("D5",),
+    )
+
+
+# --------------------------------------------------------------------------
 # D2 - Istek siniri
 # --------------------------------------------------------------------------
 
@@ -222,6 +284,91 @@ def _rule_rate_limit(case: dict[str, Any]) -> Decision | None:
         ),
         sonraki_adim=("Yanıt başlıklarını ve geçerli limit bilgisini paylaşın.",),
         kaynaklar=("D2",),
+    )
+
+
+# --------------------------------------------------------------------------
+# D6 / D7 - Tarihe gore istek siniri bekleme basligi
+# --------------------------------------------------------------------------
+
+
+def _wait_header_rule(
+    case: dict[str, Any], source: str, header: str, unit: str
+) -> Decision | None:
+    # D6: "... bekleme suresini X-Demo-Retry-Seconds basliginda verir. Deger, negatif
+    #      olmayan tam sayi olarak saniye cinsindendir."
+    # D7: "... bekleme suresini X-Demo-Retry-Ms basliginda verir. Deger, negatif
+    #      olmayan tam sayi olarak milisaniye cinsindendir."
+    # Ikisi de: "Ayni istegi yeniden denemeden once en az bu sure beklenmelidir.
+    #      Baslik yoksa ya da gecerli bir tam sayi degilse bu kaynaktan kesin bekleme
+    #      suresi belirlenemez; yanit basliklari istenir."
+    response = _response(case)
+    if response.get("http_status") != 429 or response.get("error_code") != "DEMO_RATE_LIMIT":
+        return None
+    value = _header(response, header)
+    if value is not None and re.fullmatch(r"\d+", value.strip()):
+        amount = int(value.strip())
+        return Decision(
+            kural=f"{source}/429/{header}-var",
+            aile=ISTEK_SINIRI,
+            durum=TASLAK_HAZIR,
+            bulgular=(
+                "Yanıt kaydı: HTTP 429, DEMO_RATE_LIMIT; istek hız sınırına takılmış.",
+                f"{header}: {amount} ({source} kaynağına göre birim: {unit}).",
+            ),
+            belirsizlik=(f"{source} sayısal bir istek kotası vermez.",),
+            sonraki_adim=(
+                f"Aynı isteği yeniden denemeden önce en az {amount} {unit} bekleyin.",
+            ),
+            kaynaklar=(source,),
+        )
+    durum_metni = "yok" if value is None else "geçerli bir tam sayı değil"
+    return Decision(
+        kural=f"{source}/429/{header}-yok-veya-gecersiz",
+        aile=ISTEK_SINIRI,
+        durum=BILGI_GEREKLI,
+        bulgular=(
+            "Yanıt kaydı: HTTP 429, DEMO_RATE_LIMIT; istek hız sınırına takılmış.",
+            f"{header} başlığı {durum_metni}.",
+        ),
+        belirsizlik=(f"{source} kaynağına göre bu durumda kesin bekleme süresi belirlenemez.",),
+        sonraki_adim=("Yanıt başlıklarını paylaşın.",),
+        kaynaklar=(source,),
+    )
+
+
+def _rule_wait_seconds(case: dict[str, Any]) -> Decision | None:
+    return _wait_header_rule(case, "D6", "X-Demo-Retry-Seconds", "saniye")
+
+
+def _rule_wait_ms(case: dict[str, Any]) -> Decision | None:
+    return _wait_header_rule(case, "D7", "X-Demo-Retry-Ms", "milisaniye")
+
+
+# --------------------------------------------------------------------------
+# D8 - v2 limit ust siniri
+# --------------------------------------------------------------------------
+
+
+def _rule_limit_cap(case: dict[str, Any]) -> Decision | None:
+    # D8: "v2 GET /orders isteklerinde limit en cok 50 olabilir. Daha buyuk limit
+    #      degerleri kabul edilmez; limit 50 veya daha kucuk bir degere
+    #      dusurulmelidir."
+    request = _request(case)
+    if request.get("path") != "/orders":
+        return None
+    query = request.get("query") if isinstance(request.get("query"), dict) else {}
+    limit = query.get("limit")
+    if not isinstance(limit, int) or isinstance(limit, bool) or limit <= 50:
+        return None
+    return Decision(
+        kural="D8/limit-50-ustu",
+        aile=SAYFALAMA,
+        durum=TASLAK_HAZIR,
+        bulgular=(f"İstekte limit={limit}; D8'e göre limit en çok 50 olabilir.",),
+        belirsizlik=("D8, daha büyük limitle dönen yanıtın biçimini açıklamaz.",),
+        sonraki_adim=("limit değerini 50 veya daha küçük bir değere düşürün.",),
+        kaynaklar=("D8",),
     )
 
 
@@ -365,10 +512,16 @@ def _pagination_needs_info(kural: str, finding: str, count_note: tuple[str, ...]
 # --------------------------------------------------------------------------
 
 # (kural fonksiyonu, kuralin dayandigi kaynak). Kaynak vakada secilmemisse kural
-# kullanilamaz; secilmemis bir kaynaga dayanilmaz.
+# kullanilamaz; secilmemis bir kaynaga dayanilmaz. Ayni konudaki kurallarda sira:
+# v1 once (D4, D5), eski once (D6, D7), ozel kural genelden once (D8, D3).
 _RULES = (
     (_rule_auth, "D1"),
+    (_rule_auth_header_v1, "D4"),
+    (_rule_auth_header_v2, "D5"),
     (_rule_rate_limit, "D2"),
+    (_rule_wait_seconds, "D6"),
+    (_rule_wait_ms, "D7"),
+    (_rule_limit_cap, "D8"),
     (_rule_pagination, "D3"),
 )
 
@@ -408,6 +561,46 @@ def decide(case: dict[str, Any], source_ids: list[str] | tuple[str, ...]) -> Dec
     )
 
 
+def _no_usable_source(case: dict[str, Any]) -> Decision:
+    """Uygunluk motoru tum kaynaklari eledi: teshis yok, gerekce gosterilir."""
+    response = _response(case)
+    status = response.get("http_status")
+    code = response.get("error_code")
+    kayit = f"HTTP {status}" + (f", {code}" if isinstance(code, str) else "")
+    return Decision(
+        kural="uygun-kaynak-yok",
+        aile=None,
+        durum=UZMAN_INCELEMESI,
+        bulgular=(
+            f"Yanıt kaydı: {kayit}.",
+            "Vakaya atanan kaynakların hiçbiri olay tarihi ve API sürümü için uygun değil; "
+            "teşhis üretilmedi.",
+        ),
+        belirsizlik=("Uygun bir kaynak olmadan kök neden ve sonraki adım belirlenemez.",),
+        sonraki_adim=("Kaydı uzman incelemesine yönlendirin.",),
+        kaynaklar=(),
+    )
+
+
+def _with_applicability(decision: Decision, filtre: applicability.Filtre) -> Decision:
+    """Elenen kaynaklari 'Bulgular'a, belirsizleri 'Belirsizlik' bolumune ekler."""
+    elenen = tuple(
+        f"Uygunluk kontrolü: {', '.join(sids)} kullanılmadı — "
+        f"{applicability.GEREKCE_ACIKLAMASI[kod]} ({kod})."
+        for kod, sids in applicability.grouped_by_reason(filtre, list(filtre.elenen))
+    )
+    belirsiz = tuple(
+        f"Uygunluk belirsiz: {', '.join(sids)} — "
+        f"{applicability.GEREKCE_ACIKLAMASI[kod]} ({kod})."
+        for kod, sids in applicability.grouped_by_reason(filtre, filtre.belirsiz)
+    )
+    return replace(
+        decision,
+        bulgular=decision.bulgular + elenen,
+        belirsizlik=decision.belirsizlik + belirsiz,
+    )
+
+
 def render(decision: Decision) -> str:
     """C modundaki yanitla ayni dort baslikli metin."""
     lines = ["Bulgular:"]
@@ -420,10 +613,24 @@ def render(decision: Decision) -> str:
     return "\n".join(lines)
 
 
-def run_case(case: dict[str, Any], source_ids: list[str]) -> dict[str, Any]:
-    """C modundaki chat_once sonucu ile ayni alanlar. Model olcumleri null'dir."""
+def run_case(
+    case: dict[str, Any],
+    source_ids: list[str],
+    filtre: applicability.Filtre | None = None,
+) -> dict[str, Any]:
+    """C modundaki chat_once sonucu ile ayni alanlar. Model olcumleri null'dir.
+
+    filtre verilirse (uygunluk motoru acik) kurallar yalnizca kullanilabilir
+    kaynaklarla calisir; elenen ve belirsiz kaynaklar metinde gosterilir. Hic
+    kullanilabilir kaynak yoksa teshis uretilmez (uzman_incelemesi).
+    """
     started = time.perf_counter()
-    decision = decide(case, source_ids)
+    if filtre is None:
+        decision = decide(case, source_ids)
+    elif not filtre.kullanilan:
+        decision = _with_applicability(_no_usable_source(case), filtre)
+    else:
+        decision = _with_applicability(decide(case, list(filtre.kullanilan)), filtre)
     content = render(decision)
     elapsed = time.perf_counter() - started
     return {

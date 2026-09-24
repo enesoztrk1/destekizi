@@ -94,6 +94,13 @@ class ParsingTest(unittest.TestCase):
         text = "Bulgular:\n- D2 ve D3 bu hatayı kapsamaz.\n\nSonraki adım:\n- Bekleyin.\n\nKaynaklar: D1"
         self.assertEqual(run_eval.cited_sources(run_eval.parse_sections(text)), ["D1"])
 
+    def test_inflected_heading_word_in_a_bullet_does_not_start_a_section(self) -> None:
+        text = ("Belirsizlik / eksik bilgi:\n- Kaynakların uygunluğu doğrulanmadı; D3 yok.\n"
+                "- Olay tarihi bilinmiyor.\n\nSonraki adım:\n- Bekleyin.\n\nKaynaklar: D1")
+        sections = run_eval.parse_sections(text)
+        self.assertIn("olay tarihi", run_eval.fold(sections["belirsizlik"]))
+        self.assertEqual(run_eval.cited_sources(sections), ["D1"])
+
     def test_missing_kaynaklar_section_is_not_an_empty_citation(self) -> None:
         self.assertIsNone(run_eval.cited_sources(run_eval.parse_sections("Bulgular:\n- x")))
 
@@ -331,6 +338,19 @@ class ApplicabilityMetricsTest(unittest.TestCase):
         self.assertEqual(ev["yururluk_disi"], (1, 1))
         self.assertEqual(ev["yururluk_disi_atif"], 1)
         self.assertEqual(ev["belirsizlik_gosterim"], (0, 1))
+
+    def test_wrong_decision_state_is_counted_as_wrong(self) -> None:
+        run_dir = write_run(self.root, "r", "A", {"X1": SHOWN})
+        wrong = {"degerlendirilen_kaynaklar": {
+            "D1": {"durum": "UYGUN", "gerekce": "uygun"},
+            "D3": {"durum": "UYGUN_DEGIL", "gerekce": "yururluk_bitmis"},
+            "D2": {"durum": "UYGUN", "gerekce": "uygun"},  # beklenen BELIRSIZ
+        }}
+        set_record_fields(run_dir, {"X1": wrong})
+        ev = run_eval.evaluate_run(run_eval.load_run(run_dir), self.expected)
+        self.assertEqual(ev["per_case"]["X1"]["uygunluk_dogru"], (2, 3))
+        self.assertEqual(ev["per_case"]["X1"]["gerekce_dogru"], (1, 2))
+        self.assertIn("D2: UYGUN (beklenen BELIRSIZ)", ev["per_case"]["X1"]["uygunluk_hatalari"])
 
     def test_uncertainty_marker_must_be_in_the_uncertainty_section(self) -> None:
         run_dir = write_run(self.root, "r", "A", {"X1": SHOWN})

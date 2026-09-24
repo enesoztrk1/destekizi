@@ -6,8 +6,9 @@ yorum olarak durur. Disaridan HTTP bilgisi veya varsayim eklenmez.
 
 Girdi: bir vaka kaydi ve o vakanin secilmis kaynak kimlikleri.
 Okunan alanlar yalnizca yapisaldir: response.http_status, response.error_code,
-response.headers, response.has_more / next_cursor, request.path / query,
-api_version, request.authorization_present. Serbest metin alanlari (ticket,
+response.required_scope, response.headers, response.has_more / next_cursor /
+item_count, request.path / query, request.authorization_present, api_version.
+Serbest metin alanlari (ticket,
 note, debug_note) OKUNMAZ; bu yuzden kayit icindeki talimat benzeri ifadeler
 cikti uretimini etkileyemez.
 

@@ -142,8 +142,12 @@ class MetricsTest(unittest.TestCase):
         self.assertEqual(run_c["durum"], (0, 2))  # basarisiz vaka dogru sayilmaz
         self.assertEqual(run_c["aile"], (0, 2))
         self.assertEqual(run_c["gerekli_kaynak"], (1, 2))  # X1'de D1 var, X2 yanit yok
-        self.assertEqual(run_c["yasak_kaynak"], (1, 2))
-        self.assertEqual(run_c["yasak_ifade"], (1, 2))
+        # Cevabi olmayan X2 yasak kontrollerinde "temiz" sayilmaz; paydaya girmez.
+        self.assertEqual(run_c["yasak_kaynak"], (1, 1))
+        self.assertEqual(run_c["yasak_ifade"], (1, 1))
+        self.assertIsNone(run_c["per_case"]["X2"]["yasak_kaynak_ihlali"])
+        self.assertIsNone(run_c["per_case"]["X2"]["yasak_ifadeler_bulunan"])
+        self.assertEqual(run_c["cevap_yok"], ["X2"])
         self.assertEqual(run_c["per_case"]["X1"]["yasak_ifadeler_bulunan"], ["süresi doldu"])
         self.assertEqual(run_c["gerekli_ifade"], (2, 2))
         self.assertEqual(run_c["karisiklik"],
@@ -168,6 +172,55 @@ class MetricsTest(unittest.TestCase):
         report = run_eval.render_report([ev], expected)
         self.assertIn("kontrol yok", report)
         self.assertIn("makine_kontrolleri alanı olmayan vakalar: X1", report)
+
+    def test_answer_without_kaynaklar_section_is_not_clean_on_forbidden_sources(self) -> None:
+        expected = run_eval.load_expected(write_expected(self.root, {"X1": CHECKS}))
+        no_section = "Bulgular:\n- D3 kullanıldı.\n\nSonraki adım:\n- Bekleyin."
+        ev = run_eval.evaluate_run(run_eval.load_run(
+            write_run(self.root, "r", "C", {"X1": no_section})), expected)
+        self.assertIsNone(ev["per_case"]["X1"]["yasak_kaynak_ihlali"])
+        self.assertEqual(ev["yasak_kaynak"], (0, 0))
+        self.assertFalse(ev["per_case"]["X1"]["gerekli_kaynak_tamam"])
+
+    def test_invalid_machine_checks_are_rejected_not_silently_skipped(self) -> None:
+        bad_blocks = (
+            {"beklenen_durumu": "taslak_hazir"},       # yazim hatali anahtar
+            {"beklenen_durum": "hazir"},               # gecersiz deger
+            {"beklenen_aile": "odeme"},                # gecersiz aile
+            {"yasak_ifadeler": "süresi doldu"},        # liste degil
+        )
+        for block in bad_blocks:
+            with self.subTest(block=block):
+                path = write_expected(self.root, {"X1": block})
+                with self.assertRaises(ValueError):
+                    run_eval.load_expected(path)
+
+    def test_duplicate_or_corrupt_rows_are_reported(self) -> None:
+        path = self.root / "expected.jsonl"
+        path.write_text('{"case_id": "X1"}\n{"case_id": "X1"}\n', encoding="utf-8")
+        with self.assertRaisesRegex(ValueError, "yinelenen"):
+            run_eval.load_expected(path)
+        run_dir = write_run(self.root, "r", "C", {"X1": GOOD})
+        with (run_dir / "cases.jsonl").open("a", encoding="utf-8") as handle:
+            handle.write("{bozuk\n")
+        with self.assertRaisesRegex(ValueError, "satir 2"):
+            run_eval.load_run(run_dir)
+        with redirect_stdout(io.StringIO()), redirect_stderr(io.StringIO()) as err:
+            code = run_eval.main([str(run_dir), "--expected", str(write_expected(self.root, {}))])
+        self.assertEqual(code, 2)
+        self.assertIn("satir 2", err.getvalue())
+
+    def test_interrupted_run_state_is_shown_in_report(self) -> None:
+        expected = run_eval.load_expected(write_expected(self.root, {"X1": CHECKS, "X2": CHECKS}))
+        run_dir = write_run(self.root, "r", "C", {"X1": GOOD})
+        (run_dir / "summary.json").write_text(json.dumps({"calisma_durumu": "yarida_kesildi"}),
+                                              encoding="utf-8")
+        other = write_run(self.root, "s", "A", {"X1": GOOD, "X2": GOOD})
+        evs = [run_eval.evaluate_run(run_eval.load_run(d), expected) for d in (run_dir, other)]
+        report = run_eval.render_report(evs, expected)
+        self.assertIn("yarida_kesildi", report)
+        self.assertIn("özet yok", report)
+        self.assertEqual(evs[0]["cevap_yok"], ["X2"])
 
     def test_report_states_limits_at_start_and_end_and_has_no_percentages(self) -> None:
         expected = run_eval.load_expected(write_expected(self.root, {"X1": CHECKS}))

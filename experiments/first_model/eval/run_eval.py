@@ -62,25 +62,73 @@ LIMITATION = (
 # --------------------------------------------------------------------------
 
 
+FAMILIES = ("yetkilendirme", "istek_siniri", "sayfalama")
+LIST_KEYS = ("gerekli_kaynaklar", "yasak_kaynaklar", "yasak_ifadeler", "gerekli_ifadeler")
+CHECK_KEYS = ("beklenen_durum", "beklenen_aile") + LIST_KEYS
+
+
+def _read_jsonl(path: Path) -> list[dict[str, Any]]:
+    """Bozuk satiri dosya ve satir numarasiyla bildirir; sessizce atlamaz."""
+    rows = []
+    for lineno, line in enumerate(path.read_text(encoding="utf-8").splitlines(), start=1):
+        if not line.strip():
+            continue
+        try:
+            row = json.loads(line)
+        except json.JSONDecodeError as exc:
+            raise ValueError(f"{path.name} satir {lineno}: bozuk JSON ({exc})") from exc
+        if not isinstance(row, dict) or not isinstance(row.get("case_id"), str):
+            raise ValueError(f"{path.name} satir {lineno}: case_id iceren bir nesne degil")
+        rows.append(row)
+    return rows
+
+
+def _validate_checks(case_id: str, block: dict[str, Any]) -> None:
+    """Yazim hatali anahtar veya gecersiz deger sessizce 'kontrol yok' olmasin."""
+    unknown = sorted(set(block) - set(CHECK_KEYS))
+    if unknown:
+        raise ValueError(f"{case_id}: makine_kontrolleri bilinmeyen alan: {', '.join(unknown)}")
+    if "beklenen_durum" in block and block["beklenen_durum"] not in STATUSES:
+        raise ValueError(f"{case_id}: gecersiz beklenen_durum: {block['beklenen_durum']!r}")
+    if "beklenen_aile" in block and block["beklenen_aile"] not in FAMILIES + (None,):
+        raise ValueError(f"{case_id}: gecersiz beklenen_aile: {block['beklenen_aile']!r}")
+    for key in LIST_KEYS:
+        value = block.get(key, [])
+        if not isinstance(value, list) or not all(isinstance(v, str) for v in value):
+            raise ValueError(f"{case_id}: {key} metin listesi olmali")
+
+
 def load_expected(path: Path) -> dict[str, dict[str, Any] | None]:
     """case_id -> makine_kontrolleri (alan yoksa None)."""
     checks: dict[str, dict[str, Any] | None] = {}
-    for line in path.read_text(encoding="utf-8").splitlines():
-        if line.strip():
-            row = json.loads(line)
-            block = row.get("makine_kontrolleri")
-            checks[row["case_id"]] = block if isinstance(block, dict) else None
+    for row in _read_jsonl(path):
+        case_id = row["case_id"]
+        if case_id in checks:
+            raise ValueError(f"{path.name}: yinelenen case_id: {case_id}")
+        block = row.get("makine_kontrolleri")
+        if block is not None and not isinstance(block, dict):
+            raise ValueError(f"{case_id}: makine_kontrolleri bir nesne olmali")
+        if block is not None:
+            _validate_checks(case_id, block)
+        checks[case_id] = block
     return checks
 
 
 def load_run(run_dir: Path) -> dict[str, Any]:
-    records = [
-        json.loads(line)
-        for line in (run_dir / "cases.jsonl").read_text(encoding="utf-8").splitlines()
-        if line.strip()
-    ]
+    records = _read_jsonl(run_dir / "cases.jsonl")
+    seen: set[str] = set()
+    for record in records:
+        if record["case_id"] in seen:
+            raise ValueError(f"{run_dir.name}/cases.jsonl: yinelenen case_id: {record['case_id']}")
+        seen.add(record["case_id"])
     meta_path = run_dir / "run_meta.json"
     meta = json.loads(meta_path.read_text(encoding="utf-8")) if meta_path.is_file() else {}
+    summary_path = run_dir / "summary.json"
+    if summary_path.is_file():
+        summary = json.loads(summary_path.read_text(encoding="utf-8"))
+        run_state = summary.get("calisma_durumu") or "belirtilmemiş (eski özet)"
+    else:
+        run_state = "özet yok"
     mode = meta.get("mod") or next((r.get("mod") for r in records if r.get("mod")), None)
     mode_note = None
     if mode is None:
@@ -89,6 +137,7 @@ def load_run(run_dir: Path) -> dict[str, Any]:
         "run_id": meta.get("run_id") or run_dir.name,
         "mode": mode,
         "mode_note": mode_note,
+        "run_state": run_state,
         "records": {r["case_id"]: r for r in records},
     }
 
@@ -164,6 +213,7 @@ def evaluate_case(record: dict[str, Any] | None, checks: dict[str, Any] | None) 
 
     result: dict[str, Any] = {
         "kayit_var": record is not None,
+        "cevap_var": has_answer,
         "ok": ok,
         "failure_kind": (record or {}).get("failure_kind") if record else "kayit_yok",
         "durum": status,
@@ -183,11 +233,13 @@ def evaluate_case(record: dict[str, Any] | None, checks: dict[str, Any] | None) 
     required = checks.get("gerekli_kaynaklar") or []
     if required:
         result["gerekli_kaynak_tamam"] = cited is not None and set(required) <= set(cited)
+    # Yasak kontrolleri yalnizca incelenecek bir cevap varsa anlamlidir. Cevap yoksa
+    # (veya Kaynaklar bolumu yoksa) "temiz" sayilmaz; None = kontrol edilemedi.
     forbidden = checks.get("yasak_kaynaklar") or []
-    if forbidden:
-        result["yasak_kaynak_ihlali"] = bool(cited and set(forbidden) & set(cited))
+    if forbidden and cited is not None:
+        result["yasak_kaynak_ihlali"] = bool(set(forbidden) & set(cited))
     phrases = checks.get("yasak_ifadeler") or []
-    if phrases:
+    if phrases and has_answer:
         result["yasak_ifadeler_bulunan"] = [p for p in phrases if fold(p) in folded]
     phrases = checks.get("gerekli_ifadeler") or []
     if phrases:
@@ -236,6 +288,7 @@ def evaluate_run(run: dict[str, Any], expected: dict[str, dict | None]) -> dict[
         "per_case": per_case,
         "vaka_sayisi": len(case_ids),
         "teknik_tamamlanan": sum(1 for c in per_case.values() if c["ok"]),
+        "cevap_yok": sorted(cid for cid, c in per_case.items() if not c["cevap_var"]),
         "basarisizlik_turleri": failure_kinds,
         "durum": (sum(metric_values("durum_dogru")), len(metric_values("durum_dogru"))),
         "aile": (sum(metric_values("aile_dogru")), len(metric_values("aile_dogru"))),
@@ -307,6 +360,8 @@ METRIC_ROWS = (
     ("Teknik tamamlanma", lambda ev: _of(ev["vaka_sayisi"], ev["teknik_tamamlanan"])),
     ("Başarısızlık türleri", lambda ev: ", ".join(f"{k}: {v}" for k, v in
                                                   sorted(ev["basarisizlik_turleri"].items())) or "yok"),
+    ("Cevabı olmayan vaka (yasak kontrolleri yapılamaz)",
+     lambda ev: f"{len(ev['cevap_yok'])}" + (f": {', '.join(ev['cevap_yok'])}" if ev["cevap_yok"] else "")),
     ("Durum doğru", lambda ev: _frac(ev["durum"])),
     ("Aile doğru", lambda ev: _frac(ev["aile"])),
     ("Gerekli kaynakların hepsi listelenmiş", lambda ev: _frac(ev["gerekli_kaynak"])),
@@ -349,10 +404,12 @@ def render_report(evaluations: list[dict[str, Any]], expected: dict[str, dict | 
     assign_labels(evaluations)
     out: list[str] = ["# Destekİzi — makine kontrolleri raporu", "", LIMITATION, ""]
 
-    out += ["## Değerlendirilen koşular", "", "| Etiket | run_id | Mod | Not |", "| --- | --- | --- | --- |"]
+    out += ["## Değerlendirilen koşular", "",
+            "| Etiket | run_id | Mod | Çalışma durumu | Not |", "| --- | --- | --- | --- | --- |"]
     for ev in evaluations:
         run = ev["run"]
-        out.append(f"| {_label(ev)} | `{run['run_id']}` | {run['mode']} | {run['mode_note'] or ''} |")
+        out.append(f"| {_label(ev)} | `{run['run_id']}` | {run['mode']} | {run['run_state']} "
+                   f"| {run['mode_note'] or ''} |")
     missing = sorted(cid for cid, block in expected.items() if block is None)
     out += ["", f"makine_kontrolleri alanı olmayan vakalar: {', '.join(missing) if missing else 'yok'}.", ""]
 
@@ -384,8 +441,8 @@ def render_report(evaluations: list[dict[str, Any]], expected: dict[str, dict | 
         out.append("| --- | --- | --- | --- | --- |")
         for name, key, is_list in PAIRED:
             buckets: dict[str, list[str]] = {"a": [], "b": [], "both": [], "none": []}
-            for cid in sorted(first["per_case"]):
-                pa = _passed(first["per_case"][cid], key, is_list)
+            for cid in sorted(set(first["per_case"]) | set(second["per_case"])):
+                pa = _passed(first["per_case"].get(cid, {key: None}), key, is_list)
                 pb = _passed(second["per_case"].get(cid, {key: None}), key, is_list)
                 if pa is None or pb is None:
                     continue
@@ -403,7 +460,7 @@ def render_report(evaluations: list[dict[str, Any]], expected: dict[str, dict | 
                    f"{lab} yasak ifade", f"{lab} eksik ifade"]
     out.append("| " + " | ".join(header) + " |")
     out.append("| " + " | ".join("---" for _ in header) + " |")
-    for cid in sorted(evaluations[0]["per_case"]):
+    for cid in sorted(set().union(*(ev["per_case"] for ev in evaluations))):
         block = expected.get(cid) or {}
         row = [cid, _cell(block.get("beklenen_durum")), _cell(block.get("beklenen_aile"))]
         for ev in evaluations:
@@ -462,8 +519,12 @@ def main(argv: list[str] | None = None) -> int:
     if len(args.run_dirs) > 2:
         parser.error("en fazla iki sonuc dizini verilebilir")
 
-    expected = load_expected(Path(args.expected))
-    evaluations = [evaluate_run(load_run(Path(d)), expected) for d in args.run_dirs]
+    try:
+        expected = load_expected(Path(args.expected))
+        evaluations = [evaluate_run(load_run(Path(d)), expected) for d in args.run_dirs]
+    except (OSError, ValueError) as exc:
+        print(f"HATA: {exc}", file=sys.stderr)
+        return 2
     report = render_report(evaluations, expected)
     if args.out:
         Path(args.out).write_text(report, encoding="utf-8")

@@ -18,8 +18,9 @@ Sistem müşteriye kendiliğinden mesaj göndermez.
 
 ## Mevcut aşama (24 Eylül 2026)
 
-**Aşama 1 — İlk yerel model deneyi.** Üç kontrollü kaynak (D1–D3) ve 10
-geliştirme vakası (C01–C10) ile yerel modelin davranışını ölçüyoruz.
+**Aşama 1 — İlk yerel model deneyi.** Kontrollü kaynaklar ve geliştirme
+vakalarıyla yerel modelin davranışını ölçüyoruz. İlk koşu D1–D3 ve C01–C10 ile
+yapıldı. Uygunluk motoru için D4–D8 ve C11–C18 eklendi.
 
 Aşama 1 içindeki durum:
 
@@ -29,6 +30,8 @@ Aşama 1 içindeki durum:
 | A modu: kural tabanlı, deterministik temel yöntem (`rules_mode.py`) | Tamamlandı |
 | Makine kontrolleri (`expected.jsonl → makine_kontrolleri`) ve değerlendirme betiği | Tamamlandı |
 | A/C karşılaştırması ([`AC_karsilastirma.md`](../experiments/first_model/results_sample/AC_karsilastirma.md)) | Yalnızca biçimsel makine kontrolleriyle yapıldı |
+| Uygunluk motoru (`applicability.py`): sürüm ve olay tarihine göre kaynak filtresi, `--no-applicability` | Tamamlandı |
+| Uygunluk ablation ölçümü ([`ablation_uygunluk.md`](../experiments/first_model/results_sample/ablation_uygunluk.md)) | Yalnızca A modunda yapıldı; C modu yeniden çalıştırılmadı |
 | İnsan puanlaması (`review_template.md`) | **Yapılmadı** |
 
 Makine kontrolleri yanıtın teknik doğruluğunu, kaynak desteğinin gerçekliğini ve
@@ -90,7 +93,12 @@ Kullanıcı Python biliyor; uygulamalı AI mühendisliği kavramlarını bu proj
 Aşağıdakiler bilinçli olarak yapılmamıştır ve tamamlanmış sayılmamalıdır:
 
 - Kaynak arama, embedding, vektör indeksi, RAG.
-- Tarih/sürüm uygulanabilirlik motoru (doküman revizyonu × olay tarihi).
+- Olay tarihini veya API sürümünü destek talebi metninden çıkarma. Motor bu
+  bilgileri yalnızca vakanın yapısal alanlarından okur.
+- Uygunluk motorunun C modundaki (yerel model) etkisinin ölçülmesi. Motor C
+  moduna bağlandı ve sahte servisle test edildi; gerçek modelle koşu yapılmadı.
+- Saat düzeyinde yürürlük ve saat dilimi mantığı (motor yalnızca gün düzeyinde
+  çalışır).
 - LLM/RAG katkısının kural tabanlı temel yöntemle **insan puanlamasına dayalı**
   karşılaştırılması. Temel yöntem (A modu) ve biçimsel karşılaştırma vardır; kalite
   karşılaştırması yoktur.

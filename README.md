@@ -27,7 +27,7 @@ Deney şartnamesi: [`docs/EXPERIMENT_SPEC.md`](docs/EXPERIMENT_SPEC.md).
 
 ## Ölçülmüş teknik sonuçlar
 
-Tek koşuya dayanır: `20260923T214519Z-661fd9`.
+Aşağıdaki tablo tek C koşusuna dayanır: `20260923T214519Z-661fd9`.
 
 | Alan | Değer |
 | --- | --- |
@@ -49,6 +49,30 @@ Tek koşuya dayanır: `20260923T214519Z-661fd9`.
   Bu, **kullanıcı adı maskelenmiş örnek bir koşudur**. Koşu, bu repodaki
   düzeltmelerden önceki bir çalıştırıcı sürümüyle üretildi; ayrıntılar
   `NOT.md` içinde.
+
+### A/C karşılaştırması (yalnızca makine kontrolleri)
+
+Kural tabanlı temel yöntem (A modu, model çağırmaz) ile yukarıdaki C koşusu,
+`expected.jsonl` içindeki `makine_kontrolleri` bloğuyla karşılaştırıldı.
+A koşusu: `20260924T125755Z-A-7b0aaa`.
+
+| Metrik | A | C |
+| --- | --- | --- |
+| Teknik tamamlanma | 10 / 10 | 10 / 10 |
+| Durum doğru (metinden sezgisel) | 10 / 10 | 8 / 10 |
+| Aile doğru (Kaynaklar bölümünden) | 10 / 10 | 9 / 10 |
+| Gerekli kaynakların hepsi listelenmiş | 6 / 6 | 6 / 6 |
+| Yasak ifade bulunan vaka | 0 / 5 | 1 / 5 |
+| Gerekli ifadesi eksik vaka | 0 / 9 | 2 / 9 |
+
+- Bu metrikler **biçimseldir**. Teknik doğruluğu, kaynak desteğinin
+  gerçekliğini ve belirsizlik yönetimini ölçmez; insan puanlaması yapılmadı.
+- Sezgisel kuralları, A metinlerini ve beklenen değerleri aynı kişi yazdı;
+  karşılaştırma **A lehine yanlı** olabilir. C05, C06 ve C07'de sezgisel, aynı
+  anlamı farklı sözcüklerle yazan C yanıtını en az bir kontrolde olumsuz saydı.
+- Tek C koşusu ve 10 vaka var. Buradan "A daha iyidir" sonucu çıkarılamaz.
+- Rapor ve vaka bazlı ayrıntı:
+  [`AC_karsilastirma.md`](experiments/first_model/results_sample/AC_karsilastirma.md).
 
 ## Hızlı başlangıç (Windows / PowerShell)
 
@@ -113,12 +137,14 @@ hakkında hiçbir şey göstermez.
 
 1. **İnsan puanlaması:** [`review_template.md`](experiments/first_model/review_template.md)
    ile 10 vaka puanlanacak ve sonuç raporlanacak.
-2. **Kural tabanlı temel yöntem:** Modelden bağımsız bir karşılaştırma yöntemi
-   geliştirilecek; LLM katkısı bununla ölçülecek.
+2. **Kural tabanlı temel yöntem — tamamlandı.** A modu (`run.py --mode A`)
+   ve biçimsel makine kontrolleriyle A/C karşılaştırması yapıldı. LLM katkısının
+   **kalite** açısından ölçülmesi, 1. maddedeki insan puanlamasına bağlıdır ve
+   henüz yapılmadı.
 3. **Daha sonra:** tarih/sürüm uygulanabilirlik motoru, ardından retrieval ve
    değerlendirme altyapısı.
 
-Bu işlerin hiçbiri henüz yapılmadı. Tam liste: [`docs/PROJECT.md`](docs/PROJECT.md)
+1. ve 3. maddeler henüz yapılmadı. Tam liste: [`docs/PROJECT.md`](docs/PROJECT.md)
 → "Geleceğe bırakılan işler".
 
 ## Lisans

@@ -2,7 +2,8 @@
 
 Hazırlanma tarihi: 23 Eylül 2026
 Belge türü: Deneyin teknik şartnamesi ve insan değerlendirme yönergesi
-Durum: Bu belge şartnamedir, deney sonucu değildir. Ölçülmüş bir örnek koşu
+Durum: Bu belge şartnamedir, deney sonucu değildir. Ölçülmüş örnek koşular
+(C modu ve A modu) ve ikisinin makine kontrolleri karşılaştırması
 `experiments/first_model/results_sample/` altında bulunur.
 
 ## 1. Amaç ve doğrulanmış başlangıç
@@ -215,7 +216,67 @@ Kritik hata kodları (`experiments/first_model/review_template.md` ile aynıdır
 
 Bu deney, küçük modelin daha kapsamlı geliştirmeye değer olup olmadığını anlamak içindir. Modelden bağımsız kurallı temel yöntem ve RAG/LLM katkısının karşılaştırılması sonraki aşamalardır.
 
-## 8. Öğrenme soruları
+## 8. Makine kontrolleri ve kural tabanlı temel yöntem (ek)
+
+Bu bölüm, ilk koşudan sonra eklenen iki parçanın sözleşmesidir.
+
+### 8.1 A modu
+
+`run.py --mode A`, modelden bağımsız kural tabanlı temel yöntemi (`rules_mode.py`)
+çalıştırır.
+
+- **Model yok:** Ollama'ya istek gönderilmez.
+- **Kaynaklar:** Kurallar yalnızca D1–D3 metinlerinden türetilir. Bir kural,
+  ancak dayandığı kaynak vakada seçilmişse kullanılır.
+- **Okunan alanlar:** Yalnızca yapısal alanlar okunur (`http_status`,
+  `error_code`, başlıklar, sayfalama alanları, `api_version`). Serbest metin
+  alanları okunmaz.
+- **Çıktı:** C moduyla aynı dört başlıklı metin ve aynı kayıt alanlarıdır; model
+  ölçümleri `null`'dır. Kural uymayan kayıtta teşhis üretilmez: bilgi istenir,
+  uzman incelemesine yönlendirilir ve `Kaynaklar: yok` yazılır.
+- **Determinizm:** Aynı girdi her zaman aynı çıktıyı verir.
+
+### 8.2 `makine_kontrolleri` alanı
+
+`expected.jsonl` içindeki her satır, mevcut alanlara ek olarak bir
+`makine_kontrolleri` nesnesi taşır. Mevcut `beklenen`, `gerekli_noktalar`,
+`olmamali` ve `not` alanları değişmez.
+
+| Alan | Tür | Anlam |
+| --- | --- | --- |
+| `beklenen_durum` | `"taslak_hazir"` \| `"bilgi_gerekli"` \| `"uzman_incelemesi"` | Yanıtın ne tür bir sonraki adım vermesi beklendiği |
+| `beklenen_aile` | `"yetkilendirme"` \| `"istek_siniri"` \| `"sayfalama"` \| `null` | Sorunun ait olduğu aile; `null`: hiçbir aile kök nedeni açıklamıyor |
+| `gerekli_kaynaklar` | kaynak kimliği listesi | `Kaynaklar` bölümünde bulunması gereken kimlikler |
+| `yasak_kaynaklar` | kaynak kimliği listesi | `Kaynaklar` bölümünde bulunmaması gereken kimlikler |
+| `yasak_ifadeler` | küçük harfli düz metin listesi | Yanıtta geçmemesi gereken ifadeler |
+| `gerekli_ifadeler` | küçük harfli düz metin listesi | Yanıtta geçmesi gereken ifadeler |
+
+**Türetme kuralları:**
+
+- Değerler yalnızca aynı satırdaki `gerekli_noktalar` / `olmamali` metinlerinden
+  türetilir; yeni beklenti eklenmez.
+- İfadeler, metinde birebir geçen kod, değer veya parametre atamalarıdır.
+- Olumsuz cümle veya alıntı içinde doğru bir yanıtta da geçebilecek ifadeler
+  eklenmez. Emin olunamayan alan boş liste olarak bırakılır.
+
+**Doğrulama:** `eval/run_eval.py` bloğu okurken şunları hata sayar ve çıkış
+kodu 2 ile durur: tabloda olmayan anahtar, izin verilen değerler dışında
+`beklenen_durum` / `beklenen_aile`, metin listesi olmayan liste alanı,
+nesne olmayan `makine_kontrolleri`, yinelenen `case_id` ve bozuk JSON satırı.
+`makine_kontrolleri` alanı hiç olmayan satır geçerlidir; raporda "kontrol yok"
+olarak listelenir. Alanı olan ama bir anahtarı eksik blokta o kontrol yapılmaz.
+
+**Cevapsız vaka:** Cevabı olmayan veya `Kaynaklar` bölümü olmayan yanıt, yasak
+kaynak kontrolünde "temiz" sayılmaz; cevabı olmayan yanıt yasak ifade
+kontrolünde de sayılmaz. Bu vakalar ilgili metriğin paydasına girmez.
+Başarısız kayıt (ör. `truncated_length`) kısmi metin taşısa bile cevapsız
+sayılır: gerekli kaynak ve gerekli ifade kontrollerinde eksik kabul edilir.
+
+**Sınır:** İfade kontrolleri büyük/küçük harf duyarsız alt dize eşleşmesidir; anlamı
+ölçmez. Durum ve aile, yanıt metninden sezgisel kurallarla türetilir
+(`eval/run_eval.py`). Bu kontroller §7'deki insan puanlamasının yerine geçmez.
+
+## 9. Öğrenme soruları
 
 Bu aşamanın sonunda şu sorular açıklanabilir olmalıdır:
 
@@ -228,7 +289,7 @@ Bu aşamanın sonunda şu sorular açıklanabilir olmalıdır:
 
 Küçük bireysel alıştırma: Kullanıcı C04'ün geliştirme kopyasında `Retry-After` değerini 12'den 7'ye değiştirip yeni çalışma başlatır ve yanıtın yeni değeri izleyip izlemediğini kontrol eder. Orijinal C04 ve ilk sonuçlar korunur; bu kopya ayrı geliştirme deneyi olarak kaydedilir.
 
-## 9. Model seçimi için başvurulan resmî kaynaklar
+## 10. Model seçimi için başvurulan resmî kaynaklar
 
 - Etiket ve kimlik eşleşmeleri: https://ollama.com/library/qwen3/tags
 - Kullanılacak dağıtım: https://ollama.com/library/qwen3:4b-instruct-2507-q4_K_M

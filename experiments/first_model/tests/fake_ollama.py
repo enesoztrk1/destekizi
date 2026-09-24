@@ -33,6 +33,7 @@ class _Handler(BaseHTTPRequestHandler):
         self._send(status, json.dumps(payload).encode("utf-8"))
 
     def do_GET(self) -> None:  # noqa: N802
+        self.app.all_requests.append(("GET", self.path))
         if self.path == "/api/version":
             self._send_json(200, {"version": "0.0.0-test"})
         elif self.path == "/api/tags":
@@ -52,6 +53,7 @@ class _Handler(BaseHTTPRequestHandler):
             self._send_json(404, {"error": "bilinmeyen yol"})
 
     def do_POST(self) -> None:  # noqa: N802
+        self.app.all_requests.append(("POST", self.path))
         length = int(self.headers.get("Content-Length") or 0)
         raw = self.rfile.read(length).decode("utf-8")
 
@@ -146,6 +148,7 @@ class FakeOllama:
         self.model = model
         self.behaviors = list(behaviors or [{"kind": "ok"}])
         self.chat_requests: list[dict] = []
+        self.all_requests: list[tuple[str, str]] = []  # her yontem ve yol (on kontrol dahil)
         self._index = 0
         self._server = ThreadingHTTPServer(("127.0.0.1", 0), _Handler)
         self._server.daemon_threads = True

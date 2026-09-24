@@ -1,0 +1,44 @@
+{
+  "run_id": "20260924T125755Z-A-7b0aaa",
+  "mod": "A",
+  "started_at_utc": "2026-09-24T12:57:55+00:00",
+  "model": null,
+  "host": null,
+  "options": null,
+  "auto_retry": 0,
+  "concurrency": 1,
+  "ayar_notlari": [
+    "A modu: kural tabanli, deterministik temel yontem (rules_mode.py).",
+    "Ollama'ya istek gonderilmez; on kontrol, isinma ve model cagrisi atlanir.",
+    "Model olcumleri (token, sunucu sureleri) null'dir; client_elapsed_s kural suresidir.",
+    "Kurallar yalnizca docs.json D1-D3 metinlerinden turetilmistir."
+  ],
+  "girdi_dosyalari": {
+    "prompt.txt": {
+      "path": "C:\\Users\\<USER>\\Desktop\\DestekIzi\\experiments\\first_model\\prompt.txt",
+      "sha256": "f161fa4a0a47079e9188f8851f9a71872e5b4f0362fb31543216f0f61e67c6f3"
+    },
+    "docs.json": {
+      "path": "C:\\Users\\<USER>\\Desktop\\DestekIzi\\experiments\\first_model\\docs.json",
+      "sha256": "83f073b0471bd90ca5c2cf40d9f4666c045d3185309e5202811e6b09eb0badd1"
+    },
+    "cases.jsonl": {
+      "path": "C:\\Users\\<USER>\\Desktop\\DestekIzi\\experiments\\first_model\\cases.jsonl",
+      "sha256": "30e1b509577f80693dd25584939aba9ade3fe8e88a673c587be75ebf430f07f7"
+    }
+  },
+  "calistirici_dosyasi": {
+    "path": "C:\\Users\\<USER>\\Desktop\\DestekIzi\\experiments\\first_model\\run.py",
+    "sha256": "9dbd21d1e66b924a9f181163d9c87e371c02150b2c3252c7bbf3ea3336a404d3",
+    "not": "Calisma basinda diskteki run.py dosyasinin ozeti."
+  },
+  "kural_motoru_dosyasi": {
+    "path": "C:\\Users\\<USER>\\Desktop\\DestekIzi\\experiments\\first_model\\rules_mode.py",
+    "sha256": "92f98c56e7b9a0d9190c0f9f17ff4f3630b68060556e90fbebddad104c693bd2",
+    "not": "Calisma basinda diskteki rules_mode.py dosyasinin ozeti."
+  },
+  "cevap_anahtari": "expected.jsonl uretim yolunda okunmaz; ozeti bilerek alinmaz.",
+  "python_version": "3.12.7 (tags/v3.12.7:0b05ead, Oct  1 2024, 03:06:41) [MSC v.1941 64 bit (AMD64)]",
+  "python_implementation": "CPython",
+  "platform": "Windows-11-10.0.26200-SP0"
+}

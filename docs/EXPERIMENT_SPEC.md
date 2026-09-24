@@ -269,6 +269,8 @@ olarak listelenir. Alanı olan ama bir anahtarı eksik blokta o kontrol yapılma
 **Cevapsız vaka:** Cevabı olmayan veya `Kaynaklar` bölümü olmayan yanıt, yasak
 kaynak kontrolünde "temiz" sayılmaz; cevabı olmayan yanıt yasak ifade
 kontrolünde de sayılmaz. Bu vakalar ilgili metriğin paydasına girmez.
+Başarısız kayıt (ör. `truncated_length`) kısmi metin taşısa bile cevapsız
+sayılır: gerekli kaynak ve gerekli ifade kontrollerinde eksik kabul edilir.
 
 **Sınır:** İfade kontrolleri büyük/küçük harf duyarsız alt dize eşleşmesidir; anlamı
 ölçmez. Durum ve aile, yanıt metninden sezgisel kurallarla türetilir

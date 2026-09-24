@@ -209,7 +209,8 @@ def evaluate_case(record: dict[str, Any] | None, checks: dict[str, Any] | None) 
     status = derive_status(sections) if has_answer else UNDETERMINED
     family = derive_family(cited) if has_answer else UNDETERMINED
     checks = checks or {}
-    folded = fold(content)
+    # Basarisiz kaydin (or. truncated_length) kismi metni ifade kontrolunu gecirmemeli.
+    folded = fold(content) if has_answer else ""
 
     result: dict[str, Any] = {
         "kayit_var": record is not None,

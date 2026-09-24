@@ -182,6 +182,30 @@ class MetricsTest(unittest.TestCase):
         self.assertEqual(ev["yasak_kaynak"], (0, 0))
         self.assertFalse(ev["per_case"]["X1"]["gerekli_kaynak_tamam"])
 
+    def test_failed_record_with_partial_content_does_not_pass_phrase_checks(self) -> None:
+        # run.py, truncated_length kaydinda kesilmis metni content alaninda tutar.
+        expected = run_eval.load_expected(write_expected(self.root, {"X1": CHECKS}))
+        run_dir = write_run(self.root, "r", "C", {"X1": GOOD})
+        record = json.loads((run_dir / "cases.jsonl").read_text(encoding="utf-8"))
+        record.update(ok=False, failure_kind="truncated_length")
+        (run_dir / "cases.jsonl").write_text(json.dumps(record, ensure_ascii=False) + "\n",
+                                             encoding="utf-8")
+        ev = run_eval.evaluate_run(run_eval.load_run(run_dir), expected)
+        case = ev["per_case"]["X1"]
+        self.assertEqual(case["gerekli_ifadeler_eksik"], ["orders:read"])
+        self.assertFalse(case["gerekli_kaynak_tamam"])
+        self.assertIsNone(case["yasak_ifadeler_bulunan"])
+        self.assertEqual(ev["gerekli_ifade"], (1, 1))  # (eksik vaka, kontrol edilen)
+        self.assertEqual(ev["cevap_yok"], ["X1"])
+        self.assertEqual(ev["basarisizlik_turleri"], {"truncated_length": 1})
+
+    def test_duplicate_case_in_run_file_is_reported(self) -> None:
+        run_dir = write_run(self.root, "r", "C", {"X1": GOOD})
+        line = (run_dir / "cases.jsonl").read_text(encoding="utf-8")
+        (run_dir / "cases.jsonl").write_text(line + line, encoding="utf-8")
+        with self.assertRaisesRegex(ValueError, "yinelenen case_id: X1"):
+            run_eval.load_run(run_dir)
+
     def test_invalid_machine_checks_are_rejected_not_silently_skipped(self) -> None:
         bad_blocks = (
             {"beklenen_durumu": "taslak_hazir"},       # yazim hatali anahtar

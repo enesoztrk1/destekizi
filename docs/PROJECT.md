@@ -21,6 +21,20 @@ Sistem müşteriye kendiliğinden mesaj göndermez.
 **Aşama 1 — İlk yerel model deneyi.** Üç kontrollü kaynak (D1–D3) ve 10
 geliştirme vakası (C01–C10) ile yerel modelin davranışını ölçüyoruz.
 
+Aşama 1 içindeki durum:
+
+| İş | Durum |
+| --- | --- |
+| C modu (yerel model) çalıştırıcısı ve tek örnek koşu | Tamamlandı |
+| A modu: kural tabanlı, deterministik temel yöntem (`rules_mode.py`) | Tamamlandı |
+| Makine kontrolleri (`expected.jsonl → makine_kontrolleri`) ve değerlendirme betiği | Tamamlandı |
+| A/C karşılaştırması ([`AC_karsilastirma.md`](../experiments/first_model/results_sample/AC_karsilastirma.md)) | Yalnızca biçimsel makine kontrolleriyle yapıldı |
+| İnsan puanlaması (`review_template.md`) | **Yapılmadı** |
+
+Makine kontrolleri yanıtın teknik doğruluğunu, kaynak desteğinin gerçekliğini ve
+belirsizlik yönetimini ölçmez. "LLM gerekli mi?" sorusu insan puanlaması
+yapılmadan yanıtlanmış sayılmaz.
+
 Bu aşamanın tanımı, veri içeriği ve kabul ölçütleri
 [`EXPERIMENT_SPEC.md`](EXPERIMENT_SPEC.md) dosyasındadır.
 Uygulama `experiments/first_model/` altındadır.
@@ -77,9 +91,11 @@ Aşağıdakiler bilinçli olarak yapılmamıştır ve tamamlanmış sayılmamal�
 
 - Kaynak arama, embedding, vektör indeksi, RAG.
 - Tarih/sürüm uygulanabilirlik motoru (doküman revizyonu × olay tarihi).
-- Modelden bağımsız **kurallı temel yöntem (rule-based baseline)** ve
-  LLM/RAG katkısının bununla karşılaştırılması.
-- FastAPI, Gradio, PostgreSQL, pgvector, Docker, CI.
+- LLM/RAG katkısının kural tabanlı temel yöntemle **insan puanlamasına dayalı**
+  karşılaştırılması. Temel yöntem (A modu) ve biçimsel karşılaştırma vardır; kalite
+  karşılaştırması yoktur.
+- FastAPI, Gradio, PostgreSQL, pgvector, Docker. (Depoda yalnızca davranış
+  testlerini çalıştıran bir CI iş akışı vardır; model çalıştırmaz.)
 - Fine-tuning, agent altyapısı.
 - Gerçek müşteri verisi, canlı ticaret API'si, otomatik mesaj gönderimi.
 - Ücretli model API'si, bulut model, yeni AI aboneliği.

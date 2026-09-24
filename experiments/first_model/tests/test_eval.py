@@ -282,9 +282,10 @@ class RealDataTest(unittest.TestCase):
         run_dir = next(root.iterdir())
         expected = run_eval.load_expected(run_eval.DEFAULT_EXPECTED)
         ev = run_eval.evaluate_run(run_eval.load_run(run_dir), expected)
-        self.assertEqual(ev["teknik_tamamlanan"], 10)
-        self.assertEqual(ev["durum"], (10, 10))
-        self.assertEqual(ev["aile"], (10, 10))
+        n = len(expected)
+        self.assertEqual(ev["teknik_tamamlanan"], n)
+        self.assertEqual(ev["durum"], (n, n))
+        self.assertEqual(ev["aile"], (n, n))
         self.assertEqual(ev["yasak_ifade"][0], 0)
         self.assertEqual(ev["gerekli_ifade"][0], 0)
         # Metinden turetilen durum, kural motorunun ic karariyla ayni olmali.

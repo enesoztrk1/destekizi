@@ -1,4 +1,4 @@
-# İlk yerel model deneyi (3 kaynak × 10 vaka)
+# İlk yerel model deneyi (8 kaynak × 18 vaka)
 
 Bu paket, yerel `qwen3:4b-instruct-2507-q4_K_M` modelinin Türkçe destek yanıtı
 taslağı üretirken nasıl davrandığını **ölçmek** içindir. Ürün kodu değildir.
@@ -9,6 +9,10 @@ taslağı üretirken nasıl davrandığını **ölçmek** içindir. Ürün kodu 
 - **A modu:** modelden bağımsız, deterministik kural tabanlı temel yöntem
   (`rules_mode.py`). Ollama'ya hiç istek göndermez.
 
+İki modda da kaynaklar önce **uygunluk motorundan** (`applicability.py`) geçer.
+Motor, bir kaynağın vakanın API sürümüne ve olay tarihine uyup uymadığına karar
+verir. Varsayılan olarak açıktır; `--no-applicability` ile kapatılır.
+
 Deney şartnamesi ve kabul ölçütleri: [`../../docs/EXPERIMENT_SPEC.md`](../../docs/EXPERIMENT_SPEC.md)
 Proje tanımı: [`../../docs/PROJECT.md`](../../docs/PROJECT.md)
 
@@ -17,10 +21,14 @@ Proje tanımı: [`../../docs/PROJECT.md`](../../docs/PROJECT.md)
 ```
 cases.jsonl (bir vaka)
         │
-        ├── source_ids ile docs.json'dan SEÇİLMİŞ kaynak metinleri
+        ├── source_ids ile docs.json'dan SEÇİLMİŞ kaynaklar
         │
         ▼
-prompt.txt (sistem mesajı)  +  vaka/kaynak (kullanıcı mesajı)
+applicability.py: sürüm + olay tarihi filtresi (UYGUN / UYGUN_DEGIL / BELIRSIZ)
+        │   UYGUN_DEGIL → elenir, metni hiçbir yere gitmez
+        │   BELIRSIZ    → kullanılır, belirsizlik mesajda/çıktıda gösterilir
+        ▼
+prompt.txt (sistem mesajı)  +  vaka/kaynak/uygunluk (kullanıcı mesajı)
         │
         ▼
 yerel Ollama  POST /api/chat   (stream=false, yeniden deneme yok)
@@ -33,7 +41,7 @@ results/<run_id>/cases.jsonl   (ham yanıt + ölçümler + hatalar)
 ```
 
 A modunda `prompt.txt` → Ollama adımı yerine `rules_mode.py` çalışır; kurallar
-yalnızca vakanın yapısal alanlarını ve seçilmiş kaynak kimliklerini kullanır.
+yalnızca vakanın yapısal alanlarını ve filtreden geçen kaynak kimliklerini kullanır.
 
 `expected.jsonl` üretim akışının **dışındadır**. Çalıştırıcı (`run.py`) ve kural
 motoru onu okumaz; yalnızca değerlendirme betiği (`eval/run_eval.py`) okur. `run.read_text`
@@ -54,12 +62,13 @@ yakaladığı da test edilir.
 
 | Dosya | Görevi |
 | --- | --- |
-| `docs.json` | D1–D3 kontrollü kaynak metinleri (kurgusal DemoCommerce test verisi) |
-| `cases.jsonl` | C01–C10; model girdileri + elle seçilmiş `source_ids` |
+| `docs.json` | D1–D8 kontrollü kaynak metinleri (kurgusal DemoCommerce test verisi); D4–D8 sürüm ve yürürlük tarihi taşır |
+| `cases.jsonl` | C01–C18; model girdileri + elle seçilmiş `source_ids`; C11–C18 ayrıca `olay_tarihi` taşır (C16 hariç) |
 | `expected.jsonl` | İnsan değerlendirme anahtarı ve `makine_kontrolleri` bloğu. **Üretim yoluna girmez.** |
 | `prompt.txt` | Tek, sürümlenebilir sistem yönergesi (`prompt_version: 1`) |
 | `run.py` | Sıralı çalıştırıcı (`--mode A` veya `C`); süre, token ve hata kaydı tutar |
-| `rules_mode.py` | A modu kural motoru; her kural D1–D3'teki kaynak cümlesine bağlıdır |
+| `applicability.py` | Uygunluk motoru: kaynak × API sürümü × olay tarihi → `UYGUN` / `UYGUN_DEGIL` / `BELIRSIZ` + gerekçe kodu |
+| `rules_mode.py` | A modu kural motoru; her kural D1–D8'deki kaynak cümlesine bağlıdır |
 | `eval/run_eval.py` | Sonuç dizinlerini makine kontrolleriyle karşılaştıran rapor betiği; model çağırmaz |
 | `review_template.md` | Boş insan puanlama tablosu ve rubrik |
 | `tests/` | Sahte HTTP servisiyle çalışan davranış testleri, kural motoru ve değerlendirme testleri |
@@ -87,6 +96,12 @@ A modu (kural tabanlı; Ollama gerekmez):
 py -3.12 .\experiments\first_model\run.py --mode A
 ```
 
+Uygunluk motoru kapalı (ablation; kaynaklar filtrelenmez):
+
+```powershell
+py -3.12 .\experiments\first_model\run.py --mode A --no-applicability
+```
+
 Değerlendirme raporu (bir veya iki sonuç dizini; model çağırmaz):
 
 ```powershell
@@ -104,6 +119,39 @@ Testler:
 ```powershell
 py -3.12 -m unittest discover -s .\experiments\first_model\tests -p "test_*.py" -v
 ```
+
+## Uygunluk motoru
+
+Sözleşmenin tamamı (üç durum, gerekçe kodları, öncelik sırası):
+[`EXPERIMENT_SPEC.md` §8.3](../../docs/EXPERIMENT_SPEC.md).
+
+- **Tarih aralığı:** `valid_from <= olay_tarihi < valid_to`. Başlangıç günü
+  dahil, bitiş günü hariçtir. Açık uç (`null`), o yönde sınır olmadığı anlamına
+  gelir.
+- **İki tarih de `null`:** Bu, "her zaman geçerli" demek değildir. Karar
+  `BELIRSIZ` olur (`kaynak_tarihi_yok`).
+- **Olay tarihi veya sürüm yok:** Karar `BELIRSIZ` olur (`tarih_bilinmiyor` /
+  `surum_bilinmiyor`). Motor sürüm veya tarih varsaymaz.
+- **Elenen kaynak** (`UYGUN_DEGIL`): C modunda metni modele gönderilmez. A
+  modunda kurallara verilmez.
+- **Belirsiz kaynak** kullanılır, ama belirsizlik gösterilir:
+  - A modu, `Belirsizlik / eksik bilgi` bölümüne gerekçe koduyla bir satır yazar.
+  - C modunda kullanıcı mesajına `UYGUNLUK KONTROLU` bölümü eklenir.
+- **Hiç uygun kaynak yoksa:** teşhis üretilmez. Durum `uzman_incelemesi` olur ve
+  gerekçe gösterilir.
+- **`--no-applicability`:** Filtre kapanır ve vakanın bütün kaynakları kullanılır.
+  Karar alanları `null` yazılır. Motor kapalıyken ve vakada `olay_tarihi` yokken
+  kullanıcı mesajı, motordan önceki biçimle birebir aynıdır; bu bir testle
+  sabitlendi.
+- **Hatalı tarih** (`YYYY-MM-DD` dışı, geçersiz gün, `valid_from >= valid_to`):
+  Veri hatasıdır. Çalışma istek göndermeden çıkış kodu 2 ile durur.
+- **Saat dilimi:** Yalnızca gün düzeyinde çalışılır. Saat dilimi farkı gün
+  sınırında belirsizlik yaratabilir. Motor saat bilgisi işlemez ve bugünün
+  tarihini kullanmaz.
+
+Kurallar (`rules_mode.py`) sürüm ve tarih kontrol etmez; bu iş motorundur. Motor
+kapalıyken aynı konuda iki kaynak varsa, `_RULES` sırası hangisinin
+uygulanacağını belirler. Ablation sonucu bu tasarımla birlikte okunmalıdır.
 
 ## A modu: kural tabanlı temel yöntem
 
@@ -218,9 +266,9 @@ gönderilmez; `/api/show` çıktısı `run_meta.json` içine kaydedilir. Ollama
 
 | Dosya | İçerik |
 | --- | --- |
-| `run_meta.json` | `mod`, ayarlar, girdi dosyalarının SHA-256 özetleri, çalıştırılan `run.py` dosyasının SHA-256 özeti (`calistirici_dosyasi`), model etiketi + digest + kısa kimlik, Ollama/Python sürümü, model metadata, `api_version_istek_suresi_s` |
+| `run_meta.json` | `mod`, ayarlar, girdi dosyalarının SHA-256 özetleri, çalıştırılan `run.py` dosyasının SHA-256 özeti (`calistirici_dosyasi`), `uygunluk_motoru` (`acik` ve `applicability.py` SHA-256 özeti), model etiketi + digest + kısa kimlik, Ollama/Python sürümü, model metadata, `api_version_istek_suresi_s` |
 | `warmup.json` | Isınma isteği (süre özetine dahil değil); ısınma atlanırsa oluşmaz |
-| `cases.jsonl` | Vaka başına: gerçekten gönderilen mesajlar, ham API yanıtı, `done`, `done_reason`, `thinking`, token sayıları, süreler, `istemci_eksi_sunucu_total_s`, hata kaydı. `started_at_utc` istek gönderilmeden **önce** alınır |
+| `cases.jsonl` | Vaka başına: `olay_tarihi`, `uygunluk_motoru_acik`, `degerlendirilen_kaynaklar` (kaynak → karar ve gerekçe kodu), `kullanilan_kaynaklar`, `elenen_kaynaklar` (kaynak → gerekçe kodu), `belirsiz_kaynaklar` (motor kapalıyken karar alanları `null`), gerçekten gönderilen mesajlar, ham API yanıtı, `done`, `done_reason`, `thinking`, token sayıları, süreler, `istemci_eksi_sunucu_total_s`, hata kaydı. `started_at_utc` istek gönderilmeden **önce** alınır |
 | `summary.json` | `mod`, `calisma_durumu` (`tamamlandi` / `yarida_kesildi`), `planlanan_vaka_sayisi`, `kesinti`, ısınma durumu (`isinma.durum`: `basarili` / `basarisiz` / `atlandi` / A modunda `uygulanamaz`), teknik tamamlanma sayısı, başarısızlık türleri, vaka bazlı süreler, tamamlananların medyanı |
 
 `calistirici_dosyasi` alanı yalnızca bu alanı yazan sürümden sonraki koşularda
@@ -300,7 +348,9 @@ başlamadan** tek hatayla durur.
 
 - Kaynak arama başarısı ve RAG katkısı — kaynaklar her vaka için **elle**
   seçilmiştir (`source_ids`).
-- Tarih/sürüm uygulanabilirliği — sürüm bilgisi vakada açıkça verilmiştir.
+- Tarih/sürüm uygulanabilirliğinin gerçek dokümanlarda doğruluğu — motor
+  yalnızca kurgusal D1–D8 ve elle yazılmış C01–C18 ile sınandı. Olay tarihi ve
+  sürüm vakada açıkça verilir; metinden çıkarılmaz.
 - Kural tabanlı temel yönteme göre **yanıt kalitesi** farkı — A ve C yalnızca
   biçimsel makine kontrolleriyle karşılaştırıldı; insan puanlaması yapılmadı.
 - Prompt-injection güvenliği — C10 tek bir örnektir, kapsamlı kanıt değildir.

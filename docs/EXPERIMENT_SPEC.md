@@ -218,7 +218,7 @@ Bu deney, küçük modelin daha kapsamlı geliştirmeye değer olup olmadığın
 
 ## 8. Makine kontrolleri ve kural tabanlı temel yöntem (ek)
 
-Bu bölüm, ilk koşudan sonra eklenen iki parçanın sözleşmesidir.
+Bu bölüm, ilk koşudan sonra eklenen parçaların sözleşmesidir.
 
 ### 8.1 A modu
 
@@ -226,7 +226,7 @@ Bu bölüm, ilk koşudan sonra eklenen iki parçanın sözleşmesidir.
 çalıştırır.
 
 - **Model yok:** Ollama'ya istek gönderilmez.
-- **Kaynaklar:** Kurallar yalnızca D1–D3 metinlerinden türetilir. Bir kural,
+- **Kaynaklar:** Kurallar yalnızca D1–D8 metinlerinden türetilir. Bir kural,
   ancak dayandığı kaynak vakada seçilmişse kullanılır.
 - **Okunan alanlar:** Yalnızca yapısal alanlar okunur (`http_status`,
   `error_code`, başlıklar, sayfalama alanları, `api_version`). Serbest metin
@@ -275,6 +275,143 @@ sayılır: gerekli kaynak ve gerekli ifade kontrollerinde eksik kabul edilir.
 **Sınır:** İfade kontrolleri büyük/küçük harf duyarsız alt dize eşleşmesidir; anlamı
 ölçmez. Durum ve aile, yanıt metninden sezgisel kurallarla türetilir
 (`eval/run_eval.py`). Bu kontroller §7'deki insan puanlamasının yerine geçmez.
+
+### 8.3 Uygunluk motoru (`applicability.py`)
+
+Kaynak seçimi iki aşamalıdır: vaka kendi `source_ids` listesini verir, ardından
+uygunluk motoru bu listeyi **modelden ve kural motorundan önce** filtreler. Motor
+üç soruyu cevaplar: sürüm uyuyor mu, olay tarihinde yürürlükte mi, bilinmiyor mu.
+
+**Girdiler:** kaynağın `api_versions`, `valid_from`, `valid_to` alanları; vakanın
+`api_version` ve isteğe bağlı `olay_tarihi` alanı (`YYYY-MM-DD` veya `null`).
+Motor bugünün tarihini kullanmaz; "gelecekte yürürlüğe girecek" her zaman olay
+tarihine göredir.
+
+**Üç durum ve gerekçe kodları:**
+
+| Durum | Gerekçe kodu | Ne zaman |
+| --- | --- | --- |
+| `UYGUN` | `uygun` | Sürüm listede var ve olay tarihi aralıkta |
+| `UYGUN_DEGIL` | `surum_uyusmazligi` | Vakanın sürümü kaynağın `api_versions` listesinde yok |
+| `UYGUN_DEGIL` | `yururluk_baslamamis` | Olay tarihi `valid_from` tarihinden önce |
+| `UYGUN_DEGIL` | `yururluk_bitmis` | Olay tarihi `valid_to` tarihinde veya sonrasında |
+| `BELIRSIZ` | `surum_bilinmiyor` | Vakanın `api_version` değeri `null` |
+| `BELIRSIZ` | `kaynak_surumu_yok` | Kaynak sürüm belirtmiyor (`api_versions` yok veya boş) |
+| `BELIRSIZ` | `tarih_bilinmiyor` | Vakada `olay_tarihi` yok veya `null` |
+| `BELIRSIZ` | `kaynak_tarihi_yok` | Kaynağın `valid_from` ve `valid_to` alanlarının ikisi de `null` |
+
+**Tarih aralığı kuralı:** `valid_from <= olay_tarihi < valid_to`. Başlangıç günü
+**dahil**, bitiş günü **hariç**tir. `valid_from` `null` ise kaynak "her zaman
+başlamış", `valid_to` `null` ise "hâlâ yürürlükte" sayılır. **İkisi de `null` ise
+tarih bilgisi yoktur; bu "her zaman geçerli" demek değildir.** Sonuç `BELIRSIZ`
+olur ve çıktıda gösterilir.
+
+**Öncelik:** Kesin olumsuz karar, eksik bilgiden önce gelir. Bir bilgi eksik
+olsa bile diğer bilgi kaynağı kesin olarak eliyorsa sonuç `UYGUN_DEGIL` olur.
+Birden fazla kod uygunsa sıra şudur:
+
+1. `surum_uyusmazligi`
+2. `yururluk_baslamamis` / `yururluk_bitmis`
+3. `surum_bilinmiyor`
+4. `kaynak_surumu_yok`
+5. `tarih_bilinmiyor`
+6. `kaynak_tarihi_yok`
+
+**Doğrulama:** Tarihler `date` nesnesine çevrilerek karşılaştırılır; metin
+karşılaştırması yapılmaz. `YYYY-MM-DD` dışındaki biçimler, geçersiz tarihler ve
+`valid_from >= valid_to` bir veri hatasıdır. Bu hatalar "bilinmiyor" sayılmaz;
+çalıştırıcı istek göndermeden çıkış kodu 2 ile durur.
+
+**Saat dilimi:** Yalnızca gün düzeyinde çalışılır. Saat dilimi farkı gün
+sınırında belirsizlik yaratabilir: bir olay UTC'de 31 Mayıs, yerel saatte 1 Haziran
+olabilir. Motor saat bilgisi işlemez.
+
+**Akışa etkisi:**
+
+- `UYGUN_DEGIL` kaynak elenir. C modunda metni modele **gönderilmez**. A modunda
+  kurallara verilmez.
+- `BELIRSIZ` kaynak kullanılır, ama belirsizlik gösterilir:
+  - A modu, `Belirsizlik / eksik bilgi` bölümüne gerekçe koduyla bir satır ekler.
+  - C modu, kullanıcı mesajındaki `UYGUNLUK KONTROLU` bölümünde her kaynağın
+    kararını modele verir ve belirsizliği yanıtta belirtmesini ister.
+- Hiç uygun kaynak kalmazsa teşhis üretilmez. Durum `uzman_incelemesi` olur ve
+  gerekçe gösterilir.
+- `--no-applicability` motoru kapatır (ablation). Bu durumda vakanın tüm
+  kaynakları filtresiz kullanılır ve karar alanları `null` yazılır. Motor kapalıyken
+  ve vakada `olay_tarihi` yokken kullanıcı mesajı, motordan önceki biçimle birebir
+  aynıdır.
+- Kurallar (`rules_mode.py`) sürüm ve tarih kontrol etmez. Motor kapalıyken aynı
+  konuda iki kaynak varsa, kural sırası hangisinin uygulanacağını belirler.
+
+**Kayıt alanları:**
+
+- Vaka kaydı: `olay_tarihi`, `uygunluk_motoru_acik`,
+  `degerlendirilen_kaynaklar` (kaynak → `{durum, gerekce}`),
+  `kullanilan_kaynaklar`, `elenen_kaynaklar` (kaynak → gerekçe kodu),
+  `belirsiz_kaynaklar`.
+- `run_meta.json → uygunluk_motoru`: `acik` ve `applicability.py` SHA-256 özeti.
+
+### 8.4 Sürümlü kaynaklar ve tarihli vakalar
+
+D1–D3 ve C01–C10 değişmedi. D1–D3'ün iki tarihi de `null` olduğu ve C01–C10'da
+olay tarihi bulunmadığı için bu vakalardaki kaynaklar `BELIRSIZ`
+(`tarih_bilinmiyor`) olur. Bu kuralın tek istisnası C08'dir: sürümü `null`
+olduğu için gerekçe kodu `surum_bilinmiyor` olur.
+
+Eklenen kaynaklar (kurgusal DemoCommerce verisi; gerçek API davranışı değildir):
+
+| Kaynak | Sürüm | `valid_from` | `valid_to` | Kural |
+| --- | --- | --- | --- | --- |
+| D4 | v1 | 2025-01-01 | `null` | 401 `DEMO_AUTH_MISSING`: `X-Api-Key` başlığı |
+| D5 | v2 | 2025-01-01 | `null` | 401 `DEMO_AUTH_MISSING`: `Authorization: Bearer` |
+| D6 | v1, v2 | `null` | 2026-06-01 | 429: bekleme `X-Demo-Retry-Seconds` (saniye) |
+| D7 | v1, v2 | 2026-06-01 | `null` | 429: bekleme `X-Demo-Retry-Ms` (milisaniye) |
+| D8 | v2 | 2027-01-01 | `null` | `limit` en çok 50 |
+
+Eklenen vakalar:
+
+| Vaka | Sınadığı durum | Beklenen uygunluk |
+| --- | --- | --- |
+| C11 | Olay tarihi (2026-05-20) yeni kuralın yürürlüğünden önce | D6 `UYGUN`, D7 `yururluk_baslamamis` |
+| C12 | Olay tarihi (2026-07-10) yürürlükten sonra | D6 `yururluk_bitmis`, D7 `UYGUN` |
+| C13 | Olay tarihi tam yürürlük günü (2026-06-01) | D6 `yururluk_bitmis`, D7 `UYGUN` |
+| C14 | v2 vakası, kaynaklarda v1 ve v2 | D4 `surum_uyusmazligi`, D5 `UYGUN` |
+| C15 | v1 vakası, aynı kaynaklar (C14'ün eşi) | D4 `UYGUN`, D5 `surum_uyusmazligi` |
+| C16 | Olay tarihi bilinmiyor | D6, D7 `tarih_bilinmiyor` |
+| C17 | Tarih bilgisi olmayan kaynak kullanılıyor; gelecekte yürürlüğe girecek kural | D3 `kaynak_tarihi_yok`, D8 `yururluk_baslamamis` |
+| C18 | Hiç uygun kaynak kalmıyor | D5 `surum_uyusmazligi` → `uzman_incelemesi` |
+
+### 8.5 Uygunluk alanları ve metrikleri
+
+`makine_kontrolleri` bloğuna iki alan eklendi. Mevcut alanlar değişmedi.
+
+| Alan | Tür | Anlam |
+| --- | --- | --- |
+| `beklenen_uygunluk` | kaynak kimliği → `"UYGUN"` \| `"UYGUN_DEGIL"` \| `"BELIRSIZ"` | Vakanın her kaynağı için beklenen karar |
+| `beklenen_gerekce` | kaynak kimliği → gerekçe kodu | `UYGUN` olmayan kaynakların beklenen gerekçe kodu |
+
+Bilinmeyen durum, bilinmeyen gerekçe kodu veya durumla çelişen gerekçe
+(ör. `UYGUN` + `yururluk_bitmis`) bir hatadır.
+
+`eval/run_eval.py` bu alanlarla şunları mutlak sayıyla raporlar:
+
+- **Uygunluk kararı doğruluğu ve gerekçe kodu doğruluğu:** kaynak bazındadır ve
+  vaka kaydındaki `degerlendirilen_kaynaklar` alanıyla karşılaştırılır. Motor
+  kapalı koşuda karar olmadığı için "ölçülmedi" yazılır; sıfır yazılmaz.
+- **Yürürlükte/sürümde olmayan kaynağa dayanma:** yanıtın `Kaynaklar`
+  bölümünde, beklenen kararı `UYGUN_DEGIL` olan bir kaynağın bulunmasıdır.
+  Metnin o kaynağın kuralını uygulayıp uygulamadığını ölçmez.
+- **Belirsizlik gösterimi:** Beklenen `BELIRSIZ` kaynağın gerekçe koduna göre
+  `Belirsizlik / eksik bilgi` bölümünde sabit bir işaret aranır:
+  - `tarih_bilinmiyor` → "olay tarihi"
+  - `kaynak_tarihi_yok` → "yürürlük"
+  - `surum_*` → "sürüm"
+
+  A modunun belirsizlik satırlarını ve bu işaretleri aynı kişi yazdı.
+
+**Sınır:** Bu metrikler uygunluk kararının doğruluğunu ölçer. Açıklamanın teknik
+doğruluğunu ve kaynak desteğinin gerçekliğini **ölçmez**. Bunlar §7'deki insan
+puanlamasıyla ölçülür ve bu puanlama henüz yapılmamıştır.
 
 ## 9. Öğrenme soruları
 

@@ -34,9 +34,32 @@ jobs:
       # kütüphaneyle çalışır. Arama testleri sahte embedding kullanır. Gerçek
       # embedding modeli gerektiren testler (RealModelTest) sentence-transformers
       # veya yerel model yokken skipUnless ile atlanır; CI'da model İNDİRİLMEZ.
+      # API testleri (test_api.py) fastapi yokken burada atlanır; aşağıdaki
+      # "api" işinde çalışır.
 
       - name: Veri doğrulaması (modele istek göndermez)
         run: python experiments/first_model/run.py --validate-only
 
       - name: Davranış testleri
         run: python -m unittest discover -s experiments/first_model/tests -p "test_*.py" -v
+
+  api:
+    # Servis katmanı testleri. Yalnızca requirements-api.txt kurulur (fastapi,
+    # uvicorn, httpx). sentence-transformers ve torch KURULMAZ (ağır ve bu testler
+    # için gereksiz); bu ortamda B modu isteği arama paketi olmadığı için 503 döner.
+    # Ollama ve model yoktur; C modu sahte HTTP servisine karşı çalışır.
+    name: api (ubuntu-latest, Python 3.12)
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Servis bağımlılıkları
+        run: python -m pip install -r requirements-api.txt
+
+      - name: API testleri
+        run: python -m unittest discover -s experiments/first_model/tests -p "test_api.py" -v

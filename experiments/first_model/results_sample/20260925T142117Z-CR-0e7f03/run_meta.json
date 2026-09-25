@@ -1,0 +1,165 @@
+{
+  "run_id": "20260925T142117Z-CR-0e7f03",
+  "mod": "C",
+  "started_at_utc": "2026-09-25T14:21:17+00:00",
+  "model": "qwen3:4b-instruct-2507-q4_K_M",
+  "host": "http://localhost:11434",
+  "options": {
+    "num_ctx": 4096,
+    "num_predict": 384
+  },
+  "stream": false,
+  "request_timeout_s": 180,
+  "auto_retry": 0,
+  "concurrency": 1,
+  "ayar_notlari": [
+    "num_predict ilk kontrolde 256 idi; dort baslikli cevap icin 384'e cikarildi.",
+    "think alani, /no_think ve ozel model sablonu kullanilmaz (bkz. docs/PROJECT.md).",
+    "Otomatik yeniden deneme yok; her vaka bir kez calisir.",
+    "Eszamanli istek 1; vakalar sirayla calisir."
+  ],
+  "girdi_dosyalari": {
+    "prompt.txt": {
+      "path": "C:\\Users\\<USER>\\Desktop\\DestekIzi\\experiments\\first_model\\prompt.txt",
+      "sha256": "f161fa4a0a47079e9188f8851f9a71872e5b4f0362fb31543216f0f61e67c6f3"
+    },
+    "docs.json": {
+      "path": "C:\\Users\\<USER>\\Desktop\\DestekIzi\\experiments\\first_model\\docs.json",
+      "sha256": "dff23ccfb8cb90508ede31950dcb99b782f8d9ebc27cdf4e003df71a468ce954"
+    },
+    "cases.jsonl": {
+      "path": "C:\\Users\\<USER>\\Desktop\\DestekIzi\\experiments\\first_model\\cases.jsonl",
+      "sha256": "b119d205aa111f8a34b64525ebe701f8107b6d34d6b784145988dd446847bef5"
+    }
+  },
+  "calistirici_dosyasi": {
+    "path": "C:\\Users\\<USER>\\Desktop\\DestekIzi\\experiments\\first_model\\run.py",
+    "sha256": "7cbe9d53dc16e8371bbda2e2689e1734d1f2a5ee9fd81b26654d860e69102cda",
+    "not": "Calisma basinda diskteki run.py dosyasinin ozeti."
+  },
+  "uygunluk_motoru": {
+    "acik": true,
+    "path": "C:\\Users\\<USER>\\Desktop\\DestekIzi\\experiments\\first_model\\applicability.py",
+    "sha256": "80440f1d2f147cf25caeb55381e49fce970e226002ba634f4974615e4de3e1ec",
+    "not": "Calisma basinda diskteki applicability.py dosyasinin ozeti. acik=false: --no-applicability ile kapatildi; kaynaklar filtrelenmedi."
+  },
+  "kaynak_secimi": "arama",
+  "arama": {
+    "retrieval_py_sha256": "c4a3946d217fff2f64a23f9edcf4ba5bd92a4a2ddaf80cbd08466aa2ed45a677",
+    "embedding_modeli": "intfloat/multilingual-e5-small",
+    "cihaz": "cpu",
+    "top_k": 3,
+    "sorgu_alanlari": [
+      "ticket",
+      "response.http_status",
+      "response.error_code"
+    ],
+    "onekler": {
+      "kaynak": "passage: ",
+      "sorgu": "query: "
+    },
+    "benzerlik": "kosinus (normalize vektorlerde ic carpim), kesin arama, indeks yok",
+    "model_yukleme_suresi_s": 9.016262,
+    "onbellek": {
+      "path": "C:\\Users\\<USER>\\Desktop\\DestekIzi\\experiments\\first_model\\embeddings.json",
+      "sha256": "98cb08089623ea8839c982c96f5380c55aad15022a29bee972477d588686c2a6",
+      "schema_version": 1,
+      "model": "intfloat/multilingual-e5-small",
+      "model_revizyonu": "614241f622f53c4eeff9890bdc4f31cfecc418b3",
+      "sentence_transformers_surumu": "6.1.0",
+      "cihaz": "cpu",
+      "boyut": 384,
+      "normalize": true,
+      "passage_oneki": "passage: ",
+      "docs_sha256": "dff23ccfb8cb90508ede31950dcb99b782f8d9ebc27cdf4e003df71a468ce954",
+      "uretildigi_an_utc": "2026-09-25T13:44:10+00:00"
+    }
+  },
+  "cevap_anahtari": "expected.jsonl uretim yolunda okunmaz; ozeti bilerek alinmaz.",
+  "ollama_version": "0.34.4",
+  "api_version_istek_suresi_s": 2.0896,
+  "api_version_istek_suresi_notu": "Tek GET /api/version isteginin istemcide olculen toplam suresi (tek ornek). Saf baglanti maliyeti degildir ve istemci surelerinden cikarilacak sabit bir deger olarak kullanilmamalidir. Vaka bazli fark icin istemci_eksi_sunucu_total_s alanina bakin; nedeni bu olcumle belirlenmez.",
+  "model_digest": "0edcdef34593eac1aa2be9c7d06c432dcf81945adca5eca2f27662c18f168ba0",
+  "model_short_id": "0edcdef34593",
+  "model_short_id_note": "digest'in ilk 12 karakterinden turetildi (ollama list ID ile ayni yontem).",
+  "model_tag_entry": {
+    "name": "qwen3:4b-instruct-2507-q4_K_M",
+    "model": "qwen3:4b-instruct-2507-q4_K_M",
+    "modified_at": "2026-09-24T00:10:59.4071651+03:00",
+    "size": 2497293803,
+    "digest": "0edcdef34593eac1aa2be9c7d06c432dcf81945adca5eca2f27662c18f168ba0",
+    "details": {
+      "parent_model": "",
+      "format": "gguf",
+      "family": "qwen3",
+      "families": [
+        "qwen3"
+      ],
+      "parameter_size": "4.0B",
+      "quantization_level": "Q4_K_M",
+      "context_length": 262144,
+      "embedding_length": 2560
+    },
+    "capabilities": [
+      "tools",
+      "thinking",
+      "completion"
+    ]
+  },
+  "model_metadata": {
+    "status": "alindi",
+    "details": {
+      "parent_model": "",
+      "format": "gguf",
+      "family": "qwen3",
+      "families": [
+        "qwen3"
+      ],
+      "parameter_size": "4.0B",
+      "quantization_level": "Q4_K_M"
+    },
+    "capabilities": [
+      "tools",
+      "thinking",
+      "completion"
+    ],
+    "default_parameters_raw": "stop                           \"<|im_start|>\"\nstop                           \"<|im_end|>\"\ntemperature                    0.7\ntop_k                          20\ntop_p                          0.8\nrepeat_penalty                 1",
+    "default_parameters_status": "alindi",
+    "model_info_keys": [
+      "general.architecture",
+      "general.basename",
+      "general.file_type",
+      "general.finetune",
+      "general.license",
+      "general.license.link",
+      "general.parameter_count",
+      "general.quantization_version",
+      "general.size_label",
+      "general.tags",
+      "general.type",
+      "general.version",
+      "qwen3.attention.head_count",
+      "qwen3.attention.head_count_kv",
+      "qwen3.attention.key_length",
+      "qwen3.attention.layer_norm_rms_epsilon",
+      "qwen3.attention.value_length",
+      "qwen3.block_count",
+      "qwen3.context_length",
+      "qwen3.embedding_length",
+      "qwen3.feed_forward_length",
+      "qwen3.rope.freq_base",
+      "tokenizer.ggml.add_bos_token",
+      "tokenizer.ggml.bos_token_id",
+      "tokenizer.ggml.eos_token_id",
+      "tokenizer.ggml.merges",
+      "tokenizer.ggml.model",
+      "tokenizer.ggml.padding_token_id",
+      "tokenizer.ggml.pre",
+      "tokenizer.ggml.token_type",
+      "tokenizer.ggml.tokens"
+    ]
+  },
+  "python_version": "3.12.7 (tags/v3.12.7:0b05ead, Oct  1 2024, 03:06:41) [MSC v.1941 64 bit (AMD64)]",
+  "python_implementation": "CPython",
+  "platform": "Windows-11-10.0.26200-SP0"
+}

@@ -3,8 +3,9 @@
 Hazırlanma tarihi: 23 Eylül 2026
 Belge türü: Deneyin teknik şartnamesi ve insan değerlendirme yönergesi
 Durum: Bu belge şartnamedir, deney sonucu değildir. Ölçülmüş örnek koşular
-(C modu ve A modu) ve ikisinin makine kontrolleri karşılaştırması
-`experiments/first_model/results_sample/` altında bulunur.
+(C, A, B ve aramalı C) ve makine kontrolleri karşılaştırmaları
+`experiments/first_model/results_sample/` altında bulunur. B modu ve arama
+sözleşmesi: §8.6.
 
 ## 1. Amaç ve doğrulanmış başlangıç
 
@@ -411,7 +412,99 @@ Bilinmeyen durum, bilinmeyen gerekçe kodu veya durumla çelişen gerekçe
 
 **Sınır:** Bu metrikler uygunluk kararının doğruluğunu ölçer. Açıklamanın teknik
 doğruluğunu ve kaynak desteğinin gerçekliğini **ölçmez**. Bunlar §7'deki insan
-puanlamasıyla ölçülür ve bu puanlama henüz yapılmamıştır.
+puanlamasıyla ölçülür; bu puanlama yalnızca ilk C koşusu
+(`20260923T214519Z-661fd9`, C01–C10) için yapıldı.
+
+### 8.6 B modu ve anlamsal arama (`retrieval.py`)
+
+Amaç: "Arama doğru kaynağı buluyor mu?" ve "LLM'nin katkısı aramadan mı geliyor?"
+sorularını ayırmak.
+
+**Kaynak seçimi iki yoldan gelir:**
+
+| Koşu | Kaynak seçimi | Üretim |
+| --- | --- | --- |
+| `--mode A` | elle (`source_ids`) | kural tabanlı şablon |
+| `--mode B` | arama | kural tabanlı şablon (A ile aynı `rules_mode.py`) |
+| `--mode C` | elle (`source_ids`) | yerel model |
+| `--mode C --retrieval` | arama | yerel model |
+
+B ile C `--retrieval` aynı arama kodunu, aynı önbelleği ve aynı `top-k`'yı
+kullanır. Aradaki tek fark üretimin kural mı LLM mi olduğudur. `--mode A
+--retrieval` hatadır (çıkış 2); arama için `--mode B` kullanılır.
+
+**Sıra (sabit):** arama → uygunluk filtresi (§8.3) → kural motoru veya model.
+Filtrenin elediği kaynak kurala veya modele ulaşmaz. `--no-applicability` ile
+aramanın bulduğu kaynakların hepsi filtresiz kullanılır.
+
+**Model ve yöntem:** `intfloat/multilingual-e5-small`, CPU'da (GPU yerel dil
+modeline ayrılır). Tek yöntem: kosinüs benzerliği, tüm kaynaklarla kesin
+karşılaştırma. İndeks, vektör veritabanı, hibrit arama, reranker ve sorgu yeniden
+yazma yoktur; 8 kaynak için gerekmez.
+
+- **E5 önekleri:** Kaynak metni `passage: ` + başlık + metin; sorgu `query: ` +
+  sorgu metni olarak kodlanır.
+- **Normalizasyon:** Vektörler L2 ile birim uzunluğa getirilir; kosinüs benzerliği
+  bu durumda iç çarpımdır. Sıralama skora göre azalan, eşitlikte kaynak kimliğine
+  göre artandır.
+- **Sorgu metni:** Yalnızca `ticket` (destek talebi metni), `response.http_status`
+  ve `response.error_code` alanlarından kurulur:
+  `query: <ticket> | HTTP <durum> | <hata_kodu>`. Başka alan okunmaz: `note`,
+  `debug_note`, başlıklar, istek alanları, `api_version` ve `olay_tarihi` sorguya
+  girmez. Sürüm ve tarih uygunluk filtresinin işidir. Serbest metin yalnızca aranacak
+  veridir; talimat olarak yorumlanmaz.
+- **`top-k`:** Varsayılan 3, `--top-k` ile 1 ile kaynak sayısı arasında seçilir.
+
+**Önbellek (`embeddings.json`):** `retrieval.py --build` ile bir kez üretilir ve
+repoda tutulur. İçeriği: `model`, `model_revizyonu`, `boyut`, `normalize`,
+`passage_oneki`, `docs_sha256` ve kaynak kimliği başına vektör. Çalıştırıcı
+önbelleği kullanmadan önce doğrular. `docs.json` özeti, model adı, kaynak kimlikleri
+veya vektör boyutu uyuşmazsa sonuç dizini açılmadan çıkış kodu 2 ile durur ve
+yeniden üretme komutunu gösterir. Eski vektörle sessizce çalışılmaz. Çalıştırıcı
+modeli yalnızca yerelden yükler; model yoksa indirme yapmaz, hata verir. İndirme
+yalnızca `--build` ile yapılır.
+
+**Bağımlılık:** `sentence-transformers` yalnızca embedding modeli yüklenirken
+fonksiyon içinde içe aktarılır. Paket yoksa B ve C `--retrieval` çıkış kodu 2 ile
+durur ve kurulum komutunu gösterir. A ve C (elle) paket olmadan çalışır.
+
+**Kayıt alanları:**
+
+- Vaka kaydı: `kaynak_secimi` (`"elle"` \| `"arama"`), `arama_sonuclari`
+  (sıralı `{source_id, skor}` listesi; elle atamada `null`), `arama_suresi_s`
+  (sorgu kodlama ve sıralama; elle atamada `null`). `source_ids` her zaman vakanın
+  elle atanmış listesidir; aramalı koşuda karşılaştırma için korunur. Uygunluk
+  alanları (§8.3) aynen yazılır; aramalı koşuda filtre aramanın bulduklarına
+  uygulanır.
+- `run_meta.json`: `kaynak_secimi` ve `arama` (elle atamada `null`). `arama`
+  içinde `retrieval_py_sha256`, `embedding_modeli`, `cihaz`, `top_k`,
+  `sorgu_alanlari`, `onekler`, `model_yukleme_suresi_s` ve `onbellek` (dosya
+  SHA-256'sı ve vektörler hariç önbellek alanları).
+- Dizin adı: B `-B-`, C `--retrieval` `-CR-` içerir.
+
+**Arama metrikleri (`eval/retrieval_metrics.py`, `run_eval.py` raporunda):**
+Gerekli kaynaklar mevcut `makine_kontrolleri.gerekli_kaynaklar` alanından okunur;
+yeni alan eklenmedi. Gerekli kaynağı boş olan vakalar paydaya girmez ve raporda
+listelenir.
+
+| Metrik | Tanım (vaka bazında) | Raporda |
+| --- | --- | --- |
+| Recall@k | ilk k'daki gerekli kaynak / gerekli kaynak | toplam isabet / toplam gerekli kaynak |
+| Precision@k | ilk k'daki gerekli kaynak / k | toplam isabet / (vaka × k) |
+| MRR | 1 / ilk gerekli kaynağın sırası (ilk k'da yoksa 0), ortalama | ortalama ve RR toplamı |
+| Filtrenin elediği | aramadan sonra `UYGUN_DEGIL` olan kaynak | elenen / aranan; elenen gerekli kaynaklar ayrıca |
+
+Arama yapılmamış koşuda bu metrikler "uygulanamaz" yazılır; sıfır sayılmaz.
+
+**Arama / üretim hata ayrımı (2×2):** Satır: gerekli kaynakların hepsi arama ve
+filtreden sonra kurala/modele ulaştı mı (`kullanilan_kaynaklar`). Sütun: sonuç
+doğru mu. Makine vekili olarak "türetilen durum doğru ve gerekli kaynakların hepsi
+`Kaynaklar` bölümünde" kullanılır. *Ulaştı + yanlış* üretim hatası, *ulaşmadı +
+yanlış* arama veya filtre hatasıdır.
+
+**Sınır:** Arama metrikleri yalnızca kaynak kimliği düzeyindedir; yanıt kalitesini
+ölçmez. 8 kaynaklı arama uzayı çok küçüktür; buradan gerçek RAG başarısı
+çıkarılamaz. Kaynakları, vakaları ve beklentileri aynı kişi yazdı.
 
 ## 9. Öğrenme soruları
 

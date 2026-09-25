@@ -17,8 +17,10 @@ ekiplerinde yanıtı son olarak inceleyen kişi için tasarlanmıştır.
 
 Bu depo **Aşama 1 — ilk yerel model deneyini** içerir:
 
-- 3 kurgusal kaynak (D1–D3) ve 10 geliştirme vakası (C01–C10) var.
+- 8 kurgusal kaynak (D1–D8) ve 18 geliştirme vakası (C01–C18) var.
 - Vakalar 401/403, 429 ve sayfalama hatalarını kapsar.
+- C11–C18 ve D4–D8, bir kaynağın vakanın API sürümüne ve olay tarihine uyup
+  uymadığını sınar.
 - Kaynaklar her vaka için elle seçilmiştir. Bu yüzden kaynak arama/RAG başarısı
   **ölçülmez**.
 
@@ -74,6 +76,41 @@ A koşusu: `20260924T125755Z-A-7b0aaa`.
 - Rapor ve vaka bazlı ayrıntı:
   [`AC_karsilastirma.md`](experiments/first_model/results_sample/AC_karsilastirma.md).
 
+### Uygunluk motoru ablation (yalnızca A modu)
+
+Uygunluk motoru (`applicability.py`), vakanın kaynaklarını model veya kural
+motoru çalışmadan **önce** filtreler. Her kaynak için API sürümüne ve olay
+tarihine göre üç durumdan birini verir: `UYGUN`, `UYGUN_DEGIL`, `BELIRSIZ`. Tarih
+bilgisi olmayan bir kaynak "her zaman geçerli" sayılmaz; `BELIRSIZ` olur.
+
+A modu iki kez çalıştırıldı:
+
+- motor açık: `20260924T151833Z-A-84ccb9`
+- motor kapalı: `20260924T151833Z-A-d40546`
+
+Sayılar 18 vakanın tamamı içindir.
+
+| Metrik | Motor açık | Motor kapalı |
+| --- | --- | --- |
+| Uygunluk kararı doğru (kaynak bazında) | 27 / 27 | ölçülmedi (motor kapalı) |
+| Gerekçe kodu doğru (kaynak bazında) | 22 / 22 | ölçülmedi (motor kapalı) |
+| Yürürlükte veya sürümde olmayan kaynağa dayanan vaka | 0 / 7 | 5 / 7 |
+| Belirsizliği çıktıda gösteren vaka | 12 / 12 | 1 / 12 |
+| Durum doğru (metinden sezgisel) | 18 / 18 | 15 / 18 |
+| Gerekli ifadesi eksik vaka | 0 / 16 | 5 / 16 |
+
+- **Ölçülen şey:** Bu metrikler uygunluk kararının doğruluğunu ölçer.
+  Açıklamanın teknik doğruluğunu ve kaynak desteğinin gerçekliğini ölçmez; insan
+  puanlaması yapılmadı.
+- **Kural sırası etkisi:** Kurallar sürüm ve tarih kontrol etmez; motor
+  kapalıyken aynı konudaki iki kaynaktan hangisinin uygulanacağını kural sırası
+  belirler. Sıra ters çevrildiğinde motor kapalı sonuç 7 vakanın 5'inden 3'üne
+  iner (deponun dışında ölçüldü). İki sırada da sayı sıfır değildir.
+- **Tasarımcı yanlılığı:** Yeni kaynakları, vakaları ve beklenen değerleri aynı
+  kişi yazdı. C modu (yerel model) bu ölçümde çalıştırılmadı.
+- Rapor ve vaka bazlı ayrıntı:
+  [`ablation_uygunluk.md`](experiments/first_model/results_sample/ablation_uygunluk.md).
+
 ## Hızlı başlangıç (Windows / PowerShell)
 
 Gereksinim: Python 3.12. Üçüncü taraf paket yoktur; yalnızca standart kütüphane
@@ -124,8 +161,8 @@ hakkında hiçbir şey göstermez.
 - **Tasarımcı yanlılığı olabilir:** Kaynakları, vakaları ve cevap anahtarını
   aynı kişi hazırladı. Bu, değerlendirmeyi modelin lehine kolaylaştırmış
   olabilir.
-- **Örneklem küçüktür:** 10 vaka ve tek koşu var. Buradan p95, SLA veya genel
-  başarı oranı çıkarılamaz.
+- **Örneklem küçüktür:** Yerel model 10 vakada, tek koşuyla ölçüldü. A modu 18
+  vakada çalıştırıldı. Buradan p95, SLA veya genel başarı oranı çıkarılamaz.
 - **Yanıtlar deterministik değildir:** `temperature=0.7` ve sabit bir `seed`
   yok; aynı girdiyle tekrar çalıştırıldığında yanıtlar değişebilir.
 - **Testlerin kapsamı sınırlıdır:** Testler sahte servisle çalışır; çalıştırıcının
@@ -136,15 +173,17 @@ hakkında hiçbir şey göstermez.
 ## Yol haritası
 
 1. **İnsan puanlaması:** [`review_template.md`](experiments/first_model/review_template.md)
-   ile 10 vaka puanlanacak ve sonuç raporlanacak.
+   ile vakalar puanlanacak ve sonuç raporlanacak.
 2. **Kural tabanlı temel yöntem — tamamlandı.** A modu (`run.py --mode A`)
    ve biçimsel makine kontrolleriyle A/C karşılaştırması yapıldı. LLM katkısının
    **kalite** açısından ölçülmesi, 1. maddedeki insan puanlamasına bağlıdır ve
    henüz yapılmadı.
-3. **Daha sonra:** tarih/sürüm uygulanabilirlik motoru, ardından retrieval ve
-   değerlendirme altyapısı.
+3. **Tarih/sürüm uygulanabilirlik motoru — tamamlandı.** Motor A ve C akışına
+   bağlandı ve A modunda ablation ölçüldü. C modunda (yerel model) etkisi
+   henüz ölçülmedi.
+4. **Daha sonra:** retrieval ve değerlendirme altyapısı.
 
-1. ve 3. maddeler henüz yapılmadı. Tam liste: [`docs/PROJECT.md`](docs/PROJECT.md)
+1. ve 4. maddeler henüz yapılmadı. Tam liste: [`docs/PROJECT.md`](docs/PROJECT.md)
 → "Geleceğe bırakılan işler".
 
 ## Lisans

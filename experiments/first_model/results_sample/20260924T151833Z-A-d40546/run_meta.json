@@ -1,0 +1,50 @@
+{
+  "run_id": "20260924T151833Z-A-d40546",
+  "mod": "A",
+  "started_at_utc": "2026-09-24T15:18:33+00:00",
+  "model": null,
+  "host": null,
+  "options": null,
+  "auto_retry": 0,
+  "concurrency": 1,
+  "ayar_notlari": [
+    "A modu: kural tabanli, deterministik temel yontem (rules_mode.py).",
+    "Ollama'ya istek gonderilmez; on kontrol, isinma ve model cagrisi atlanir.",
+    "Model olcumleri (token, sunucu sureleri) null'dir; client_elapsed_s kural suresidir.",
+    "Kurallar yalnizca docs.json kaynak metinlerinden turetilmistir."
+  ],
+  "girdi_dosyalari": {
+    "prompt.txt": {
+      "path": "C:\\Users\\<USER>\\Desktop\\DestekIzi\\experiments\\first_model\\prompt.txt",
+      "sha256": "f161fa4a0a47079e9188f8851f9a71872e5b4f0362fb31543216f0f61e67c6f3"
+    },
+    "docs.json": {
+      "path": "C:\\Users\\<USER>\\Desktop\\DestekIzi\\experiments\\first_model\\docs.json",
+      "sha256": "dff23ccfb8cb90508ede31950dcb99b782f8d9ebc27cdf4e003df71a468ce954"
+    },
+    "cases.jsonl": {
+      "path": "C:\\Users\\<USER>\\Desktop\\DestekIzi\\experiments\\first_model\\cases.jsonl",
+      "sha256": "b119d205aa111f8a34b64525ebe701f8107b6d34d6b784145988dd446847bef5"
+    }
+  },
+  "calistirici_dosyasi": {
+    "path": "C:\\Users\\<USER>\\Desktop\\DestekIzi\\experiments\\first_model\\run.py",
+    "sha256": "bf9f1292f48758e2e37b431f2cd91bb09c166d19f1bf077da1f02fd6a8486fa3",
+    "not": "Calisma basinda diskteki run.py dosyasinin ozeti."
+  },
+  "kural_motoru_dosyasi": {
+    "path": "C:\\Users\\<USER>\\Desktop\\DestekIzi\\experiments\\first_model\\rules_mode.py",
+    "sha256": "bc16c3ba467cde26b9f047826f98a8ea1c9cc29870ec05b02dc08b948e3af450",
+    "not": "Calisma basinda diskteki rules_mode.py dosyasinin ozeti."
+  },
+  "uygunluk_motoru": {
+    "acik": false,
+    "path": "C:\\Users\\<USER>\\Desktop\\DestekIzi\\experiments\\first_model\\applicability.py",
+    "sha256": "80440f1d2f147cf25caeb55381e49fce970e226002ba634f4974615e4de3e1ec",
+    "not": "Calisma basinda diskteki applicability.py dosyasinin ozeti. acik=false: --no-applicability ile kapatildi; kaynaklar filtrelenmedi."
+  },
+  "cevap_anahtari": "expected.jsonl uretim yolunda okunmaz; ozeti bilerek alinmaz.",
+  "python_version": "3.12.7 (tags/v3.12.7:0b05ead, Oct  1 2024, 03:06:41) [MSC v.1941 64 bit (AMD64)]",
+  "python_implementation": "CPython",
+  "platform": "Windows-11-10.0.26200-SP0"
+}

@@ -18,6 +18,14 @@ Bu dosyanın iki bölümü vardır:
      .\experiments\first_model\results_sample\20260923T214519Z-661fd9 --out rapor.md
    ```
 
+   **Not (sonradan eklendi):** Bu rapor, commit `01e734c` içindeki
+   `run_eval.py` ve `expected.jsonl` ile üretildi. Sonraki commit'lerde vaka seti
+   C01–C18'e genişledi ve betiğe uygunluk metrikleri eklendi. Aynı komut bugün
+   farklı bir çıktı verir: C11–C18 bu koşularda kayıt olmadığı için eksik görünür.
+   Birebir yeniden üretmek için o commit'teki `eval/run_eval.py` ve
+   `expected.jsonl` dosyalarını kullanın. C01–C10 için mevcut metriklerin
+   değişmediği vaka vaka doğrulandı.
+
 ## Sınırlar
 
 **a. Metrikler biçimsel ve kaynak düzeyindedir.** Açıklamanın teknik

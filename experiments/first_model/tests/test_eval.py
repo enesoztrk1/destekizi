@@ -94,6 +94,13 @@ class ParsingTest(unittest.TestCase):
         text = "Bulgular:\n- D2 ve D3 bu hatayı kapsamaz.\n\nSonraki adım:\n- Bekleyin.\n\nKaynaklar: D1"
         self.assertEqual(run_eval.cited_sources(run_eval.parse_sections(text)), ["D1"])
 
+    def test_inflected_heading_word_in_a_bullet_does_not_start_a_section(self) -> None:
+        text = ("Belirsizlik / eksik bilgi:\n- Kaynakların uygunluğu doğrulanmadı; D3 yok.\n"
+                "- Olay tarihi bilinmiyor.\n\nSonraki adım:\n- Bekleyin.\n\nKaynaklar: D1")
+        sections = run_eval.parse_sections(text)
+        self.assertIn("olay tarihi", run_eval.fold(sections["belirsizlik"]))
+        self.assertEqual(run_eval.cited_sources(sections), ["D1"])
+
     def test_missing_kaynaklar_section_is_not_an_empty_citation(self) -> None:
         self.assertIsNone(run_eval.cited_sources(run_eval.parse_sections("Bulgular:\n- x")))
 
@@ -271,6 +278,132 @@ class MetricsTest(unittest.TestCase):
         self.assertEqual(outputs[0], outputs[1])
 
 
+APPL_CHECKS = {
+    "beklenen_uygunluk": {"D1": "UYGUN", "D3": "UYGUN_DEGIL", "D2": "BELIRSIZ"},
+    "beklenen_gerekce": {"D3": "yururluk_bitmis", "D2": "tarih_bilinmiyor"},
+}
+
+SHOWN = GOOD.replace(
+    "- Bu kayıt tek başına belirtecin süresinin dolduğunu göstermez.",
+    "- Bu kayıt tek başına belirtecin süresinin dolduğunu göstermez.\n"
+    "- D2: olay tarihi bilinmiyor.",
+)
+
+
+def set_record_fields(run_dir: Path, fields_by_case: dict[str, dict]) -> None:
+    path = run_dir / "cases.jsonl"
+    rows = [json.loads(line) for line in path.read_text(encoding="utf-8").splitlines() if line]
+    for row in rows:
+        row.update(fields_by_case.get(row["case_id"], {}))
+    path.write_text("".join(json.dumps(r, ensure_ascii=False) + "\n" for r in rows),
+                    encoding="utf-8")
+
+
+def set_motor(run_dir: Path, on: bool) -> None:
+    meta_path = run_dir / "run_meta.json"
+    meta = json.loads(meta_path.read_text(encoding="utf-8"))
+    meta["uygunluk_motoru"] = {"acik": on}
+    meta_path.write_text(json.dumps(meta), encoding="utf-8")
+
+
+DECIDED = {
+    "degerlendirilen_kaynaklar": {
+        "D1": {"durum": "UYGUN", "gerekce": "uygun"},
+        "D3": {"durum": "UYGUN_DEGIL", "gerekce": "yururluk_baslamamis"},  # gerekce yanlis
+        "D2": {"durum": "BELIRSIZ", "gerekce": "tarih_bilinmiyor"},
+    }
+}
+
+
+class ApplicabilityMetricsTest(unittest.TestCase):
+    def setUp(self) -> None:
+        self.root = Path(tempfile.mkdtemp(prefix="destekizi_eval_"))
+        self.addCleanup(shutil.rmtree, self.root, True)
+        self.expected = run_eval.load_expected(
+            write_expected(self.root, {"X1": {**CHECKS, **APPL_CHECKS}}))
+
+    def test_decision_reason_forbidden_source_and_uncertainty(self) -> None:
+        run_dir = write_run(self.root, "r", "A", {"X1": BAD})  # BAD, D1 ve D3'e atif yapar
+        set_record_fields(run_dir, {"X1": DECIDED})
+        set_motor(run_dir, True)
+        ev = run_eval.evaluate_run(run_eval.load_run(run_dir), self.expected)
+        case = ev["per_case"]["X1"]
+        self.assertEqual(case["uygunluk_dogru"], (3, 3))
+        self.assertEqual(case["gerekce_dogru"], (1, 2))
+        self.assertEqual(case["uygunluk_hatalari"], ["D3: yururluk_baslamamis (beklenen yururluk_bitmis)"])
+        self.assertEqual(case["yururluk_disi_kaynak"], ["D3"])
+        self.assertFalse(case["belirsizlik_gosterildi"])  # BAD'de "olay tarihi" yok
+        self.assertEqual(ev["uygunluk"], (3, 3))
+        self.assertEqual(ev["gerekce"], (1, 2))
+        self.assertEqual(ev["yururluk_disi"], (1, 1))
+        self.assertEqual(ev["yururluk_disi_atif"], 1)
+        self.assertEqual(ev["belirsizlik_gosterim"], (0, 1))
+
+    def test_wrong_decision_state_is_counted_as_wrong(self) -> None:
+        run_dir = write_run(self.root, "r", "A", {"X1": SHOWN})
+        wrong = {"degerlendirilen_kaynaklar": {
+            "D1": {"durum": "UYGUN", "gerekce": "uygun"},
+            "D3": {"durum": "UYGUN_DEGIL", "gerekce": "yururluk_bitmis"},
+            "D2": {"durum": "UYGUN", "gerekce": "uygun"},  # beklenen BELIRSIZ
+        }}
+        set_record_fields(run_dir, {"X1": wrong})
+        ev = run_eval.evaluate_run(run_eval.load_run(run_dir), self.expected)
+        self.assertEqual(ev["per_case"]["X1"]["uygunluk_dogru"], (2, 3))
+        self.assertEqual(ev["per_case"]["X1"]["gerekce_dogru"], (1, 2))
+        self.assertIn("D2: UYGUN (beklenen BELIRSIZ)", ev["per_case"]["X1"]["uygunluk_hatalari"])
+
+    def test_uncertainty_marker_must_be_in_the_uncertainty_section(self) -> None:
+        run_dir = write_run(self.root, "r", "A", {"X1": SHOWN})
+        ev = run_eval.evaluate_run(run_eval.load_run(run_dir), self.expected)
+        self.assertTrue(ev["per_case"]["X1"]["belirsizlik_gosterildi"])
+        self.assertEqual(ev["per_case"]["X1"]["yururluk_disi_kaynak"], [])
+        elsewhere = GOOD.replace("Bulgular:\n", "Bulgular:\n- D2: olay tarihi bilinmiyor.\n")
+        run_dir = write_run(self.root, "s", "A", {"X1": elsewhere})
+        ev = run_eval.evaluate_run(run_eval.load_run(run_dir), self.expected)
+        self.assertFalse(ev["per_case"]["X1"]["belirsizlik_gosterildi"])
+
+    def test_engine_off_or_old_run_is_not_measured_not_zero(self) -> None:
+        run_dir = write_run(self.root, "r", "A", {"X1": GOOD})
+        set_record_fields(run_dir, {"X1": {"degerlendirilen_kaynaklar": None}})
+        set_motor(run_dir, False)
+        ev = run_eval.evaluate_run(run_eval.load_run(run_dir), self.expected)
+        self.assertIsNone(ev["per_case"]["X1"]["uygunluk_dogru"])
+        self.assertEqual(ev["uygunluk"], (0, 0))
+        report = run_eval.render_report([ev], self.expected)
+        self.assertIn("ölçülmedi (motor kapalı veya kayıtta yok)", report)
+
+    def test_failed_record_is_not_checked_for_uncertainty(self) -> None:
+        run_dir = write_run(self.root, "r", "C", {"X1": None})
+        ev = run_eval.evaluate_run(run_eval.load_run(run_dir), self.expected)
+        self.assertIsNone(ev["per_case"]["X1"]["belirsizlik_gosterildi"])
+        self.assertIsNone(ev["per_case"]["X1"]["yururluk_disi_kaynak"])
+
+    def test_invalid_applicability_expectations_are_rejected(self) -> None:
+        bad_blocks = (
+            {"beklenen_uygunluk": {"D1": "GECERLI"}},
+            {"beklenen_uygunluk": ["D1"]},
+            {"beklenen_gerekce": {"D1": "tarih_yok"}},
+            {"beklenen_uygunluk": {"D1": "UYGUN"}, "beklenen_gerekce": {"D1": "yururluk_bitmis"}},
+        )
+        for block in bad_blocks:
+            with self.subTest(block=block):
+                with self.assertRaises(ValueError):
+                    run_eval.load_expected(write_expected(self.root, {"X1": block}))
+
+    def test_ablation_labels_and_limitation(self) -> None:
+        on = write_run(self.root, "on", "A", {"X1": SHOWN})
+        off = write_run(self.root, "off", "A", {"X1": GOOD})
+        set_record_fields(on, {"X1": DECIDED})
+        set_motor(on, True)
+        set_motor(off, False)
+        evs = [run_eval.evaluate_run(run_eval.load_run(d), self.expected) for d in (on, off)]
+        report = run_eval.render_report(evs, self.expected)
+        self.assertIn("| Metrik | A-açık | A-kapalı |", report)
+        self.assertIn("Uygunluk metriklerinin sınırı", report)
+        self.assertIn("henüz yapılmamıştır", report)
+        self.assertNotIn("%", report)
+
+
 class RealDataTest(unittest.TestCase):
     """Gercek vakalar + gercek cevap anahtari; A modu sahte servis olmadan calisir."""
 
@@ -282,11 +415,20 @@ class RealDataTest(unittest.TestCase):
         run_dir = next(root.iterdir())
         expected = run_eval.load_expected(run_eval.DEFAULT_EXPECTED)
         ev = run_eval.evaluate_run(run_eval.load_run(run_dir), expected)
-        self.assertEqual(ev["teknik_tamamlanan"], 10)
-        self.assertEqual(ev["durum"], (10, 10))
-        self.assertEqual(ev["aile"], (10, 10))
+        n = len(expected)
+        self.assertEqual(ev["teknik_tamamlanan"], n)
+        self.assertEqual(ev["durum"], (n, n))
+        self.assertEqual(ev["aile"], (n, n))
         self.assertEqual(ev["yasak_ifade"][0], 0)
         self.assertEqual(ev["gerekli_ifade"][0], 0)
+        # Uygunluk: motor acik varsayilan kosuda beklenen her karar ve gerekce tutar;
+        # yanit yururluk/surum disi kaynaga dayanmaz, her belirsizlik gosterilir.
+        self.assertEqual(ev["uygunluk"][0], ev["uygunluk"][1])
+        self.assertGreater(ev["uygunluk"][1], 0)
+        self.assertEqual(ev["gerekce"][0], ev["gerekce"][1])
+        self.assertEqual(ev["yururluk_disi"][0], 0)
+        self.assertGreater(ev["yururluk_disi"][1], 0)
+        self.assertEqual(ev["belirsizlik_gosterim"][0], ev["belirsizlik_gosterim"][1])
         # Metinden turetilen durum, kural motorunun ic karariyla ayni olmali.
         for record in run_eval.load_run(run_dir)["records"].values():
             self.assertEqual(ev["per_case"][record["case_id"]]["durum"],

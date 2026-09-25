@@ -168,6 +168,41 @@ class OutOfScopeTest(unittest.TestCase):
         self.assertEqual(d.kaynaklar, ())
 
 
+class VersionedSourceRulesTest(unittest.TestCase):
+    """D4-D8 kurallari. Surum/tarih kontrolu kuralda degil, uygunluk motorundadir."""
+
+    AUTH = {"http_status": 401, "error_code": "DEMO_AUTH_MISSING"}
+
+    def test_auth_header_rule_per_selected_source(self) -> None:
+        v1 = rules_mode.decide(make_case(self.AUTH, version="v1"), ["D4"])
+        self.assertEqual(v1.kaynaklar, ("D4",))
+        self.assertIn("X-Api-Key", v1.sonraki_adim[0])
+        v2 = rules_mode.decide(make_case(self.AUTH), ["D5"])
+        self.assertEqual(v2.kaynaklar, ("D5",))
+        self.assertIn("Bearer", v2.sonraki_adim[0])
+
+    def test_wait_header_rules_read_their_own_header_and_unit(self) -> None:
+        old = make_case({"http_status": 429, "error_code": "DEMO_RATE_LIMIT",
+                         "headers": {"X-Demo-Retry-Seconds": "30"}})
+        self.assertIn("en az 30 saniye", rules_mode.decide(old, ["D6"]).sonraki_adim[0])
+        new = make_case({"http_status": 429, "error_code": "DEMO_RATE_LIMIT",
+                         "headers": {"x-demo-retry-ms": "15000"}})
+        self.assertIn("en az 15000 milisaniye", rules_mode.decide(new, ["D7"]).sonraki_adim[0])
+        # Ayni kayitta eski baslik yok: D6 kesin sure vermez, bilgi ister.
+        missing = rules_mode.decide(new, ["D6"])
+        self.assertEqual(missing.durum, rules_mode.BILGI_GEREKLI)
+        self.assertEqual(missing.kaynaklar, ("D6",))
+
+    def test_limit_cap_rule_only_above_fifty(self) -> None:
+        request = {"method": "GET", "path": "/orders", "query": {"limit": 100}}
+        response = {"http_status": 200, "next_cursor": "c"}
+        capped = rules_mode.decide(make_case(response, request=request), ["D3", "D8"])
+        self.assertEqual(capped.kural, "D8/limit-50-ustu")
+        request["query"]["limit"] = 50
+        self.assertEqual(rules_mode.decide(make_case(response, request=request), ["D3", "D8"]).kural,
+                         "D3/v2/next_cursor-var")
+
+
 class ContractAndDeterminismTest(unittest.TestCase):
     def test_output_has_the_four_headings_in_order(self) -> None:
         for case in real_cases():

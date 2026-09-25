@@ -34,6 +34,61 @@
       "valid_from": null,
       "valid_to": null,
       "text": "DemoCommerce test ortamında GET /orders yanıtları sayfalanır:\n\n- v1, 1'den başlayan page parametresini kullanır. page_size en çok 100 olabilir. has_more=true ise aynı filtrelerle page bir artırılarak sonraki sayfa istenir; has_more=false ise devam edilmez.\n- v2, cursor kullanır. limit en çok 100 olabilir. Yanıtta boş olmayan next_cursor varsa aynı filtrelerle bu değer değiştirilmeden sonraki isteğin cursor parametresine aktarılır. next_cursor=null ise devam edilmez. v2'de page yöntemi kullanılmaz.\n\nAPI sürümü bilinmiyorsa hangi devam yönteminin geçerli olduğu varsayılmaz; sürüm ve ilk istek/yanıt örneği istenir. Bir sayfada 100 kayıt bulunması tek başına tüm kayıtların alındığını göstermez."
+    },
+    {
+      "source_id": "D4",
+      "title": "v1 kimlik dogrulama basligi",
+      "platform": "DemoCommerce",
+      "environment": "test",
+      "api_versions": ["v1"],
+      "snapshot_date": "2026-09-24",
+      "valid_from": "2025-01-01",
+      "valid_to": null,
+      "text": "DemoCommerce test ortamında v1 istekleri kimliği X-Api-Key başlığıyla gönderir. v1'de 401 / DEMO_AUTH_MISSING, istekte X-Api-Key başlığının bulunmadığını belirtir. Sonraki adım, X-Api-Key başlığının istemci tarafından gönderildiğini kontrol etmektir. Gerçek anahtar değeri istenmemelidir."
+    },
+    {
+      "source_id": "D5",
+      "title": "v2 kimlik dogrulama basligi",
+      "platform": "DemoCommerce",
+      "environment": "test",
+      "api_versions": ["v2"],
+      "snapshot_date": "2026-09-24",
+      "valid_from": "2025-01-01",
+      "valid_to": null,
+      "text": "DemoCommerce test ortamında v2 istekleri kimliği Authorization: Bearer <belirteç> başlığıyla gönderir. v2'de 401 / DEMO_AUTH_MISSING, istekte Bearer şemalı Authorization başlığının bulunmadığını belirtir. Sonraki adım, Authorization başlığının Bearer şemasıyla gönderildiğini kontrol etmektir. v2'de X-Api-Key başlığı kullanılmaz. Gerçek belirteç değeri istenmemelidir."
+    },
+    {
+      "source_id": "D6",
+      "title": "Istek siniri bekleme basligi (2026-06-01 oncesi)",
+      "platform": "DemoCommerce",
+      "environment": "test",
+      "api_versions": ["v1", "v2"],
+      "snapshot_date": "2026-05-15",
+      "valid_from": null,
+      "valid_to": "2026-06-01",
+      "text": "2026-06-01 tarihinden önceki olaylarda DemoCommerce test ortamı, 429 / DEMO_RATE_LIMIT yanıtlarında bekleme süresini X-Demo-Retry-Seconds başlığında verir. Değer, negatif olmayan tam sayı olarak saniye cinsindendir. Aynı isteği yeniden denemeden önce en az bu süre beklenmelidir. Başlık yoksa ya da geçerli bir tam sayı değilse bu kaynaktan kesin bekleme süresi belirlenemez; yanıt başlıkları istenir."
+    },
+    {
+      "source_id": "D7",
+      "title": "Istek siniri bekleme basligi (2026-06-01 itibariyla)",
+      "platform": "DemoCommerce",
+      "environment": "test",
+      "api_versions": ["v1", "v2"],
+      "snapshot_date": "2026-09-24",
+      "valid_from": "2026-06-01",
+      "valid_to": null,
+      "text": "2026-06-01 itibarıyla DemoCommerce test ortamı, 429 / DEMO_RATE_LIMIT yanıtlarında bekleme süresini X-Demo-Retry-Ms başlığında verir. Değer, negatif olmayan tam sayı olarak milisaniye cinsindendir. X-Demo-Retry-Seconds başlığı artık gönderilmez. Aynı isteği yeniden denemeden önce en az bu süre beklenmelidir. Başlık yoksa ya da geçerli bir tam sayı değilse bu kaynaktan kesin bekleme süresi belirlenemez; yanıt başlıkları istenir."
+    },
+    {
+      "source_id": "D8",
+      "title": "v2 siparis sayfalamasi limit ust siniri (2027-01-01 itibariyla)",
+      "platform": "DemoCommerce",
+      "environment": "test",
+      "api_versions": ["v2"],
+      "snapshot_date": "2026-09-24",
+      "valid_from": "2027-01-01",
+      "valid_to": null,
+      "text": "2027-01-01 itibarıyla DemoCommerce test ortamında v2 GET /orders isteklerinde limit en çok 50 olabilir. Daha büyük limit değerleri kabul edilmez; limit 50 veya daha küçük bir değere düşürülmelidir."
     }
   ]
 }

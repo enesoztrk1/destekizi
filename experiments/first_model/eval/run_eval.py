@@ -1,9 +1,11 @@
 #!/usr/bin/env python3
 """Destekizi - deterministik degerlendirme betigi. Model CAGIRMAZ.
 
-Bir veya iki sonuc dizinini (results/<run_id>/) okur, expected.jsonl icindeki
-makine_kontrolleri ile karsilastirir ve markdown rapor uretir. Iki dizin
-verilirse (ornegin A ve C modu) yan yana karsilastirir.
+Bir, iki veya uc sonuc dizinini (results/<run_id>/) okur, expected.jsonl icindeki
+makine_kontrolleri ile karsilastirir ve markdown rapor uretir. Birden fazla dizin
+verilirse (ornegin A, B ve C modu) yan yana karsilastirir; eslestirilmis fark
+tablosu yalnizca iki dizinde uretilir. Aramali kosular icin arama metrikleri
+retrieval_metrics.py ile hesaplanir.
 
 SINIR: Buradaki metrikler bicimsel ve kaynak duzeyindedir. Aciklamanin teknik
 dogrulugunu, kaynak desteginin gercekligini ve belirsizlik yonetimini OLCMEZ.
@@ -11,7 +13,7 @@ Ifade kontrolleri buyuk/kucuk harf duyarsiz alt dize eslesmesidir; anlami
 olcmez (olumsuz cumle, alinti veya esanlamli ifade yanlis sonuc verebilir).
 
 Kullanim:
-    py -3.12 eval/run_eval.py <sonuc_dizini> [<ikinci_sonuc_dizini>] [--out rapor.md]
+    py -3.12 eval/run_eval.py <sonuc_dizini> [<ikinci>] [<ucuncu>] [--out rapor.md]
 """
 
 from __future__ import annotations
@@ -29,9 +31,11 @@ DEFAULT_EXPECTED = HERE.parent / "expected.jsonl"
 
 # Uygunluk durum ve gerekce kodlarinin tek kaynagi applicability.py'dir. Yalnizca
 # sabitler okunur; beklenen degerler motorla HESAPLANMAZ.
-if str(HERE.parent) not in sys.path:
-    sys.path.insert(0, str(HERE.parent))
+for _path in (HERE.parent, HERE):
+    if str(_path) not in sys.path:
+        sys.path.insert(0, str(_path))
 import applicability  # noqa: E402
+import retrieval_metrics  # noqa: E402  arama metrikleri (ayni dizindeki modul)
 
 STATUSES = ("taslak_hazir", "bilgi_gerekli", "uzman_incelemesi")
 UNDETERMINED = "belirlenemedi"
@@ -180,12 +184,16 @@ def load_run(run_dir: Path) -> dict[str, Any]:
         mode, mode_note = "C", "kayıtta mod alanı yok; C varsayıldı"
     motor_meta = meta.get("uygunluk_motoru")
     motor = motor_meta.get("acik") if isinstance(motor_meta, dict) else None
+    search_meta = meta.get("arama")
     return {
         "run_id": meta.get("run_id") or run_dir.name,
         "mode": mode,
         "mode_note": mode_note,
         "run_state": run_state,
         "motor": motor,  # True / False / None (motordan onceki kosu)
+        # "elle" (eski kosularda alan yok) veya "arama"
+        "kaynak_secimi": meta.get("kaynak_secimi") or "elle",
+        "top_k": search_meta.get("top_k") if isinstance(search_meta, dict) else None,
         "records": {r["case_id"]: r for r in records},
     }
 
@@ -418,6 +426,10 @@ def evaluate_run(run: dict[str, Any], expected: dict[str, dict | None]) -> dict[
         "sunucu_sure_s": _range(metric_list("total_duration_s")),
         "eval_count": _range(metric_list("eval_count")),
         "prompt_eval_count": _range(metric_list("prompt_eval_count")),
+        # Arama metrikleri: arama yapilmamis kosuda None (uygulanamaz), sifir degil.
+        "arama": retrieval_metrics.run_metrics(run["records"], expected, run.get("top_k")),
+        "hata_ayrimi": retrieval_metrics.error_split(run["records"], expected, per_case),
+        "elle_arama": retrieval_metrics.manual_vs_search(run["records"]),
     }
 
 
@@ -460,11 +472,15 @@ def _range_text(stats: dict[str, float] | None) -> str:
 def assign_labels(evaluations: list[dict[str, Any]]) -> None:
     """Etiket mod adidir. Iki kosu ayni moddaysa ve uygunluk motoru biri acik biri
     kapaliysa etikete bu eklenir (ablation); aksi halde sira numarasi eklenir."""
-    modes = [ev["run"]["mode"] for ev in evaluations]
+    # B ile ayni aramayi kullanan C kosusu "C-arama" olarak ayirt edilir.
+    modes = [
+        "C-arama" if ev["run"]["mode"] == "C" and ev["run"].get("kaynak_secimi") == "arama"
+        else ev["run"]["mode"]
+        for ev in evaluations
+    ]
     motors = [ev["run"].get("motor") for ev in evaluations]
     ablation = len(evaluations) == 2 and modes[0] == modes[1] and set(motors) == {True, False}
-    for index, ev in enumerate(evaluations, start=1):
-        mode = ev["run"]["mode"]
+    for index, (ev, mode) in enumerate(zip(evaluations, modes), start=1):
         if ablation:
             ev["label"] = f"{mode}-{'açık' if ev['run']['motor'] else 'kapalı'}"
         elif modes.count(mode) > 1:
@@ -510,7 +526,20 @@ METRIC_ROWS = (
     ("Sunucu total_duration (s)", lambda ev: _range_text(ev["sunucu_sure_s"])),
     ("Çıktı token (eval_count)", lambda ev: _range_text(ev["eval_count"])),
     ("Girdi token (prompt_eval_count)", lambda ev: _range_text(ev["prompt_eval_count"])),
+    ("Arama Recall@k (gerekli kaynak ilk k sonuçta)",
+     lambda ev: _search(ev, lambda m: f"{_of(m['gerekli'], m['isabet'])} (k={m['k']})")),
+    ("Arama MRR", lambda ev: _search(ev, lambda m: (
+        f"{m['mrr']:.3f} (RR toplamı {m['rr_toplam']:.2f}, {m['vaka']} vaka)" if m["vaka"] else "kontrol yok"))),
+    ("Arama Precision@k", lambda ev: _search(
+        ev, lambda m: f"{_of(m['sonuc_sayisi'], m['isabet'])} (k={m['k']})")),
+    ("Aramadan sonra uygunluk filtresinin elediği kaynak", lambda ev: _search(
+        ev, lambda m: f"{_of(m['aranan_toplam'], m['elenen_toplam'])}"
+        + (f"; elenen gerekli kaynak: {m['elenen_gerekli']}" if m["elenen_gerekli"] else ""))),
 )
+
+
+def _search(ev: dict[str, Any], fmt: Any) -> str:
+    return "uygulanamaz (arama yapılmadı)" if ev["arama"] is None else fmt(ev["arama"])
 
 PAIRED = (
     ("Durum", "durum_dogru", False),
@@ -641,6 +670,8 @@ def render_report(evaluations: list[dict[str, Any]], expected: dict[str, dict | 
         out += [f"  - {cid}: {'; '.join(errs)}" for cid, errs in sorted(wrong.items())]
         out.append("")
 
+    out += retrieval_metrics.render(evaluations, _label, _of)
+
     out += [
         "## Yöntem ve yaklaşıklıklar",
         "",
@@ -686,12 +717,12 @@ def main(argv: list[str] | None = None) -> int:
         except (AttributeError, ValueError):
             pass
     parser = argparse.ArgumentParser(description="Destekizi makine kontrolleri raporu (model cagirmaz).")
-    parser.add_argument("run_dirs", nargs="+", help="Bir veya iki sonuc dizini.")
+    parser.add_argument("run_dirs", nargs="+", help="Bir, iki veya uc sonuc dizini (or. A, B, C).")
     parser.add_argument("--expected", default=str(DEFAULT_EXPECTED))
     parser.add_argument("--out", help="Rapor dosyasi. Verilmezse standart ciktiya yazilir.")
     args = parser.parse_args(argv)
-    if len(args.run_dirs) > 2:
-        parser.error("en fazla iki sonuc dizini verilebilir")
+    if len(args.run_dirs) > 3:
+        parser.error("en fazla uc sonuc dizini verilebilir")
 
     try:
         expected = load_expected(Path(args.expected))

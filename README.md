@@ -131,7 +131,7 @@ metriklerine girer.
 | MRR | uygulanamaz | 0,764 | 0,764 |
 | Precision@3 | uygulanamaz | 12 / 36 | 12 / 36 |
 | Filtrenin elediği arama sonucu | uygulanamaz | 11 / 54 | 11 / 54 |
-| Durum doğru (metinden sezgisel) | 18 / 18 | 12 / 18 | 13 / 18 |
+| Durum doğru (metinden sezgisel; C18 kontrol edilmez) | 17 / 17 | 11 / 17 | 13 / 17 |
 | Gerekli ifadesi eksik vaka | 0 / 16 | 7 / 16 | 5 / 16 |
 | Arama hatası (2×2; 12 vaka) | uygulanamaz | 0 | 0 |
 | Üretim hatası (2×2; 12 vaka) | uygulanamaz | 6 | 0 |
@@ -140,18 +140,18 @@ metriklerine girer.
   B'nin 6 hatasının hepsi üretim hatasıdır: kural motoru fazladan gelen kaynaklarla
   çakıştı (ör. C11–C13'te tarihsiz D2). Kural motoru dar, elle seçilmiş kaynak
   listesi için yazılmıştır.
-- **C-arama bu 12 vakada hatasız**, ama gerekli kaynağı tanımsız 6 vakanın 5'inde
-  durumu yanlış türetildi. Bilgi isteme ve uzmana yönlendirme beklenen 5 vakanın
-  hiçbirinde bu durumu üretmedi.
-- **C18:** Arama, elle atamada olmayan doğru v1 kaynağını (D4) buldu. Cevap anahtarı
-  elle atamaya göre yazıldığı için bu vaka "yanlış" sayıldı.
+- **C-arama bu 12 vakada hatasız**, ama gerekli kaynağı tanımsız ve durumu
+  kontrol edilen 5 vakanın 4'ünde durumu yanlış türetildi. Bilgi isteme ve uzmana
+  yönlendirme beklenen 4 vakanın hiçbirinde bu durumu üretmedi.
+- **C18:** Arama, elle atamada olmayan doğru v1 kaynağını (D4) buldu. Eski cevap
+  anahtarı elle atamaya göre yazıldığı için bu vakayı "yanlış" sayıyordu. C18'in
+  durum ve aile kontrolü kaldırıldı; tablodaki sayılar düzeltilmiş anahtarla
+  hesaplandı.
 - **Sınırlar:** Metrikler yanıt kalitesini ölçmez; bu üç koşu insan tarafından
   puanlanmadı (insan puanlaması yalnızca ilk C koşusu için yapıldı). 8 kaynak çok
   küçük bir arama uzayıdır; gerçek RAG başarısı çıkarılamaz. Kaynakları, vakaları
   ve beklentileri aynı kişi yazdı. 18 vakalık elle atamalı C koşusu yoktur.
-- Tablo, C18 anahtarı düzeltilmeden önceki anahtarla hesaplandı. C18'den durum
-  ve aile kontrolü kaldırıldıktan sonra durum doğru: A 17 / 17, B 11 / 17, C-arama
-  13 / 17. top-k ablation (yalnızca B): durum doğru k=1 12 / 17, k=2 12 / 17,
+- top-k ablation (yalnızca B): durum doğru k=1 12 / 17, k=2 12 / 17,
   k=3 11 / 17. Küçük k hatayı üretimden aramaya kaydırdı, azaltmadı; varsayılan
   k = 3 değişmedi.
 - Rapor: [`ABC_karsilastirma.md`](experiments/first_model/results_sample/ABC_karsilastirma.md).

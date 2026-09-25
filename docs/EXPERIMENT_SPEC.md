@@ -598,6 +598,34 @@ varlığı yoklanır. Model ilk B isteğinde yüklenir; yükleme orada bozulursa
 **Kapsam dışı:** kimlik doğrulama, istek sınırlama, veritabanı, kuyruk, arka plan
 görevi, CORS, akış (streaming). Servis yerel geliştirme ve deney içindir.
 
+### 8.9 Kaynak kodu mührü (`run_meta.json → kaynak_dosyalari`)
+
+Çalıştırıcı beş modüle bölündükten sonra `calistirici_dosyasi` alanı (yalnızca
+`run.py`'nin SHA-256 özeti) sonucu üreten kodun bir kısmını mühürlemiyordu: analiz
+yolu `pipeline.py`'de, model çağrısı `model_client.py`'dedir. Bu alanın yerini
+`kaynak_dosyalari` almıştır: üretim yoluna giren her modülün dosya adı → SHA-256
+eşlemesi.
+
+- **Kapsam:** `run.py`, `pipeline.py`, `model_client.py`, `prompting.py`,
+  `inputs.py`, `masking.py`, `applicability.py`, `rules_mode.py`, `retrieval.py`.
+  Liste `run.py` içindeki `SOURCE_MODULES` sabitidir; üretim yoluna yeni modül
+  eklenirse oraya da eklenir. `run.py`'nin içe aktarma zincirindeki yerel bir
+  modül listede yoksa test paketi kırılır.
+- **`retrieval.py` her koşuda kaydedilir.** Yalnızca aramalı koşularda (B modu,
+  C `--retrieval`) çalışır; kaydın her koşuda aynı biçimde olması okumayı
+  kolaylaştırdığı için koşula bağlanmamıştır. Aramanın gerçekten kullanılıp
+  kullanılmadığı `kaynak_secimi` alanından okunur.
+- Özet, çalışma başında diskteki dosyadan alınır. Mevcut `uygunluk_motoru`,
+  `maskeleme` ve `kural_motoru_dosyasi` alanları değişmemiştir.
+
+**Geçiş:** `kaynak_dosyalari`, 2026-09-26 tarihinde bu alanı yazan sürümle ve
+sonrasında üretilen koşularda bulunur; bu koşularda `calistirici_dosyasi` yazılmaz.
+Daha eski koşular (`results_sample/` altındakilerin tümü dahil) `calistirici_dosyasi`
+alanını taşır ve **yenilenmemiştir**: bu koşular deneyin kanıtıdır ve yeniden
+üretmek, farklı bir kod sürümüyle üretilmiş yeni bir kayıt yaratır; eskisinin
+yerini tutmaz. Bu koşuları `run.py` dışındaki hangi modül sürümlerinin ürettiği
+sonradan doğrulanamaz. `eval/run_eval.py` iki alanı da okumaz.
+
 ## 9. Öğrenme soruları
 
 Bu aşamanın sonunda şu sorular açıklanabilir olmalıdır:

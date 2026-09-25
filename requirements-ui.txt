@@ -1,0 +1,8 @@
+# Yalnizca tek ekran arayuz (experiments/first_model/ui.py) icin.
+# Arayuz servise (api.py) HTTP istegini standart kutuphaneyle (urllib) atar; ayrica
+# HTTP istemcisi paketi gerekmez. run.py, A ve C modlari bu paket olmadan calisir.
+# Surum, ayri bir sanal ortamda `pip show gradio` ile okunan kurulu surumdur (2026-09-26).
+# DIKKAT: gradio kendi fastapi/starlette/pydantic surumlerini ceker ve bunlar
+# requirements-api.txt'teki sabit surumlerle ayni degildir; arayuzu ayri bir sanal
+# ortamda kurun (bkz. experiments/first_model/README.md).
+gradio==6.28.0

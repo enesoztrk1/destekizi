@@ -36,6 +36,7 @@ Aşama 1 içindeki durum:
 | A/B/C karşılaştırması ([`ABC_karsilastirma.md`](../experiments/first_model/results_sample/ABC_karsilastirma.md)) | Yalnızca makine kontrolleri ve arama metrikleriyle yapıldı |
 | Hassas veri maskeleme (`masking.py`): başlık, alan adı ve metin desenleri | Tamamlandı; düzenli ifadeye dayalı, sınırı EXPERIMENT_SPEC §8.7'de |
 | HTTP servis katmanı (`api.py`, FastAPI): analiz, kaynak, sağlık uç noktaları | Tamamlandı; yalnızca sahte model ve A modu ile test edildi, kimlik doğrulama yok |
+| Tek ekran arayüz (`ui.py`, Gradio): servise HTTP isteği atar, iş mantığı içermez | Tamamlandı; saf fonksiyonları test edildi, çalışan servise karşı A/B/C modunda bir kez elle doğrulandı; ekran görüntüsü yok |
 | İnsan puanlaması (`review_template.md`) | **Yalnızca ilk C koşusu** (`20260923T214519Z-661fd9`, C01–C10) için yapıldı; diğer koşular puanlanmadı |
 
 Makine kontrolleri yanıtın teknik doğruluğunu, kaynak desteğinin gerçekliğini ve
@@ -123,6 +124,27 @@ için `httpx` (sürümler `requirements-api.txt`'te sabitlidir).
 - **İnce katman:** Analiz mantığı `pipeline.analyze_case` içindedir. Çalıştırıcı ve
   servis aynı fonksiyonu kullanır; servis yanıtı vaka kaydının aynısıdır.
 
+### Bağımlılık kararı: tek ekran arayüz (26 Eylül 2026)
+
+Üçüncü üçüncü taraf bağımlılık kararıdır: yalnızca `gradio` (sürüm
+`requirements-ui.txt`'te sabitlidir).
+
+- **Neden:** Analizi komut satırı ve ham JSON olmadan gösterebilmek; özellikle
+  uygunluk kararını (elenen kaynak ve gerekçe kodu) ve maskelenen alanları tek
+  ekranda görünür kılmak. Gradio form ve çıktı alanlarını birkaç satırla kurar;
+  aynı arayüzü HTML/JS ile yazmak ayrı bir ön yüz katmanı gerektirirdi.
+- **HTTP istemcisi paketi yok:** Arayüz servise isteği standart kütüphaneyle
+  (`urllib`) atar. Böylece servis yanıtını ekran alanlarına çeviren fonksiyonlar ve
+  testleri Gradio'suz, bağımlılıksız çalışır ve mevcut CI işine girer.
+- **İnce katman:** Arayüzde iş mantığı yoktur; analiz servisin
+  (`pipeline.analyze_case`) işidir. Gradio yalnızca arayüzü kuran fonksiyonun
+  içinde içe aktarılır.
+- **Ayrı ortam:** `gradio`, `requirements-api.txt`'te sabitlenenlerden farklı
+  `fastapi`/`starlette`/`pydantic` sürümleri çeker. Aynı ortama kurmak servisin
+  sabit sürümlerini değiştirir; arayüz ayrı bir sanal ortamda kurulur.
+- **İzolasyon:** `run.py` ve servis `gradio` olmadan çalışır; arayüz servise
+  yalnızca HTTP üzerinden bağlanır.
+
 ## Öğrenme hedefi
 
 Kullanıcı Python biliyor; uygulamalı AI mühendisliği kavramlarını bu proje
@@ -153,13 +175,16 @@ Aşağıdakiler bilinçli olarak yapılmamıştır ve tamamlanmış sayılmamal�
 - Saat düzeyinde yürürlük ve saat dilimi mantığı (motor yalnızca gün düzeyinde
   çalışır).
 - Büyük dosyaların bölünmesi (500 satır üstü; bölünmesi önerilir, yapılmadı):
-  `run.py` 1149, `tests/test_runner.py` 1009, `eval/run_eval.py` 743,
-  `rules_mode.py` 696, `tests/test_retrieval.py` 561 satır.
+  `tests/test_runner.py` 1055, `eval/run_eval.py` 743, `rules_mode.py` 696,
+  `run.py` 570 (1149 satırdan beş modüle bölündü), `tests/test_retrieval.py` 561
+  satır.
 - LLM/RAG katkısının kural tabanlı temel yöntemle **insan puanlamasına dayalı**
   karşılaştırılması. Temel yöntem (A modu) ve biçimsel karşılaştırma vardır; kalite
   karşılaştırması yoktur.
-- Gradio arayüzü, Docker Compose, PostgreSQL, pgvector. (FastAPI katmanı
-  eklendi. CI davranış ve API testlerini çalıştırır; model çalıştırmaz.)
+- Docker Compose, PostgreSQL, pgvector. (FastAPI katmanı ve tek ekran Gradio
+  arayüzü eklendi. CI davranış ve API testlerini çalıştırır; model çalıştırmaz.)
+- Arayüzde oturum yönetimi, geçmiş kaydı, kullanıcı hesabı, akış (streaming),
+  çoklu dil ve tema. Arayüz ekran görüntüsü ve demo videosu.
 - Servis için kimlik doğrulama, istek sınırlama, veritabanı, kuyruk, arka plan
   görevi, CORS ve akış (streaming).
 - Fine-tuning, agent altyapısı.

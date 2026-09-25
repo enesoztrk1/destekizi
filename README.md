@@ -207,6 +207,19 @@ Uç noktalar: `POST /v1/analyses`, `GET /v1/sources/{id}`, `GET /health`.
 Kimlik doğrulama, istek sınırlama, veritabanı, kuyruk ve CORS yoktur; çünkü servis
 yalnızca yerel makinede deney için tasarlandı ve ağa açık kullanım için değildir.
 
+Tek ekran arayüz (Gradio; servise HTTP isteği atar, ayrı sanal ortamda kurulur).
+Önce yukarıdaki servisi başlatın, sonra ikinci bir terminalde:
+
+```powershell
+py -3.12 -m venv .venv-ui
+.\.venv-ui\Scripts\python.exe -m pip install -r requirements-ui.txt
+$env:DESTEKIZI_API_URL = "http://localhost:8000"   # varsayılan; servis başka adresteyse değiştirin
+.\.venv-ui\Scripts\python.exe experiments/first_model/ui.py
+```
+
+Arayüz `http://127.0.0.1:7860` adresinde açılır. Çıktı bir yanıt **taslağıdır**;
+son kararı destek ekibindeki kişi verir.
+
 Linux/macOS'ta `py -3.12` yerine `python3.12` kullanın.
 
 Ayrıntılar: [`experiments/first_model/README.md`](experiments/first_model/README.md).
@@ -263,8 +276,10 @@ atlanır. İkinci iş yalnızca `requirements-api.txt` kurar ve API testlerini
    8 kaynaklı küçük arama uzayında ölçüldü.
 5. **Hassas veri maskeleme ve HTTP servisi — tamamlandı.** `masking.py`
    (düzenli ifadeye dayalı; sınırı yukarıda) ve FastAPI katmanı (`api.py`).
-6. **Sonraki tur:** Gradio arayüzü ve Docker Compose ile paketleme.
-7. **Daha sonra:** büyük kaynak kümesinde arama ve daha geniş değerlendirme
+6. **Tek ekran arayüz — tamamlandı.** `ui.py` (Gradio) servise HTTP isteği atar;
+   iş mantığı içermez. Uygunluk kararını ve maskelenen alanları gösterir.
+7. **Sonraki tur:** arayüz ekran görüntüsü/demo ve Docker Compose ile paketleme.
+8. **Daha sonra:** büyük kaynak kümesinde arama ve daha geniş değerlendirme
    altyapısı.
 
 1. madde kısmen yapıldı; 6. ve 7. maddeler yapılmadı. Tam liste: [`docs/PROJECT.md`](docs/PROJECT.md)

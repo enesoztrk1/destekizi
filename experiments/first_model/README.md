@@ -84,6 +84,7 @@ yakaladığı da test edilir.
 | `eval/retrieval_metrics.py` | Recall@k, MRR, Precision@k, filtre eleme sayısı ve arama/üretim hata ayrımı |
 | `masking.py` | Hassas veri maskeleme (standart kütüphane); başlık türü korunur |
 | `api.py` | FastAPI servis katmanı: `POST /v1/analyses`, `GET /v1/sources/{id}`, `GET /health` |
+| `ui.py` | Tek ekran Gradio arayüzü; servise HTTP isteği atar, iş mantığı içermez |
 | `applicability.py` | Uygunluk motoru: kaynak × API sürümü × olay tarihi → `UYGUN` / `UYGUN_DEGIL` / `BELIRSIZ` + gerekçe kodu |
 | `rules_mode.py` | A modu kural motoru; her kural D1–D8'deki kaynak cümlesine bağlıdır |
 | `eval/run_eval.py` | Sonuç dizinlerini makine kontrolleriyle karşılaştıran rapor betiği; model çağırmaz |
@@ -188,6 +189,39 @@ hata 500 (ayrıntı yalnızca loglanır). Ayarlar: `DESTEKIZI_OLLAMA_HOST`,
 
 Kimlik doğrulama, istek sınırlama, veritabanı, kuyruk ve CORS **yoktur**: servis
 yalnızca yerel makinede deney için tasarlandı. Ağa açık ortamda kullanılmamalıdır.
+
+## Arayüz (Gradio)
+
+Tek ekranlık arayüz: mod (A / B / C), geliştirme vakası (C01–C18) veya serbest
+metin, uygunluk motoru açık/kapalı ve `top_k` (yalnızca B modunda kullanılır).
+Ekranda yanıt taslağı, kullanılan kaynaklar, elenen kaynaklar ve gerekçe kodları,
+belirsiz kaynaklar, maskelenen alanların yolları ve süre görünür. Çıktı bir
+**taslaktır**; son kararı destek ekibindeki kişi verir.
+
+Arayüzde iş mantığı yoktur; `POST /v1/analyses` isteği atar. Sıra: **önce servis,
+sonra arayüz.** Proje kökünden:
+
+```powershell
+# 1. terminal: servis (8000 portu)
+py -3.12 -m uvicorn api:create_app --factory --app-dir experiments/first_model --port 8000
+
+# 2. terminal: arayüz, ayrı sanal ortamda (gradio servisin sabit fastapi/pydantic
+# sürümlerinden farklılarını çeker)
+py -3.12 -m venv .venv-ui
+.\.venv-ui\Scripts\python.exe -m pip install -r requirements-ui.txt
+$env:DESTEKIZI_API_URL = "http://localhost:8000"   # varsayılan
+.\.venv-ui\Scripts\python.exe experiments/first_model/ui.py
+```
+
+Arayüz `http://127.0.0.1:7860` adresinde açılır (port Gradio'nun
+`GRADIO_SERVER_PORT` değişkeniyle değiştirilebilir). Serbest metin kaynak ataması
+içermez: A ve C modu elle atanmış kaynak ister, serbest metinle B modu kullanılır.
+
+Hata gösterimi: 422 (geçersiz girdi; sorunlu alan adıyla), 502 (model geçerli
+yanıt üretmedi), 503 (model veya arama kullanılamıyor), 504 (model zaman aşımı),
+404 ve 500 (hata kimliğiyle) Türkçe cümleyle gösterilir; ham JSON veya yığın izi
+gösterilmez. Servise hiç ulaşılamıyorsa veya servis 240 s içinde yanıt vermezse
+ayrı mesaj çıkar.
 
 ## B modu ve anlamsal arama
 
@@ -369,14 +403,15 @@ gönderilmez; `/api/show` çıktısı `run_meta.json` içine kaydedilir. Ollama
 
 | Dosya | İçerik |
 | --- | --- |
-| `run_meta.json` | `mod`, ayarlar, girdi dosyalarının SHA-256 özetleri, çalıştırılan `run.py` dosyasının SHA-256 özeti (`calistirici_dosyasi`), `uygunluk_motoru` (`acik` ve `applicability.py` SHA-256 özeti), model etiketi + digest + kısa kimlik, Ollama/Python sürümü, model metadata, `api_version_istek_suresi_s` |
+| `run_meta.json` | `mod`, ayarlar, girdi dosyalarının SHA-256 özetleri, üretim yolundaki modüllerin dosya adı → SHA-256 özeti (`kaynak_dosyalari`; eski koşularda yalnızca `run.py` için `calistirici_dosyasi`), `uygunluk_motoru` (`acik` ve `applicability.py` SHA-256 özeti), model etiketi + digest + kısa kimlik, Ollama/Python sürümü, model metadata, `api_version_istek_suresi_s` |
 | `warmup.json` | Isınma isteği (süre özetine dahil değil); ısınma atlanırsa oluşmaz |
 | `cases.jsonl` | Vaka başına: `olay_tarihi`, `uygunluk_motoru_acik`, `degerlendirilen_kaynaklar` (kaynak → karar ve gerekçe kodu), `kullanilan_kaynaklar`, `elenen_kaynaklar` (kaynak → gerekçe kodu), `belirsiz_kaynaklar` (motor kapalıyken karar alanları `null`), gerçekten gönderilen mesajlar, ham API yanıtı, `done`, `done_reason`, `thinking`, token sayıları, süreler, `istemci_eksi_sunucu_total_s`, hata kaydı. `started_at_utc` istek gönderilmeden **önce** alınır |
 | `summary.json` | `mod`, `calisma_durumu` (`tamamlandi` / `yarida_kesildi`), `planlanan_vaka_sayisi`, `kesinti`, ısınma durumu (`isinma.durum`: `basarili` / `basarisiz` / `atlandi` / A modunda `uygulanamaz`), teknik tamamlanma sayısı, başarısızlık türleri, vaka bazlı süreler, tamamlananların medyanı |
 
-`calistirici_dosyasi` alanı yalnızca bu alanı yazan sürümden sonraki koşularda
-bulunur. Daha eski koşuları hangi `run.py` sürümünün ürettiği sonradan
-doğrulanamaz.
+`kaynak_dosyalari` 2026-09-26'dan itibaren üretilen koşularda bulunur ve
+`calistirici_dosyasi` alanının yerini alır; `retrieval.py` arama kullanılmasa da
+her koşuda kaydedilir. Eski koşular yenilenmemiştir; ayrıntı:
+[`docs/EXPERIMENT_SPEC.md`](../../docs/EXPERIMENT_SPEC.md) §8.9.
 
 `run_id` benzersizdir (UTC zaman damgası + A modunda `-A` + rastgele ek). Dizin
 `exist_ok=False` ile açılır; **önceki sonuçlar hiçbir koşulda ezilmez.** Dizin

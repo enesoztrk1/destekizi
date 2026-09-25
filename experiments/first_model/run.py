@@ -2,7 +2,8 @@
 """Destekizi - ilk yerel model deneyi calistiricisi.
 
 Veri akisi:
-    vaka + elle secilmis kaynaklar -> gorev yonergesi (prompt.txt)
+    vaka + kaynaklar (elle secilmis veya --retrieval/B ile aranmis)
+    -> uygunluk filtresi -> gorev yonergesi (prompt.txt)
     -> yerel Ollama /api/chat -> ham yanit + olcumler -> insan degerlendirmesi
 
 Bu dosya cevap anahtarini (expected.jsonl) OKUMAZ; `read_text` bunu engeller.
@@ -37,6 +38,7 @@ if str(HERE) not in sys.path:
     sys.path.insert(0, str(HERE))
 
 import applicability  # noqa: E402  kaynak surum/yururluk filtresi (ayni dizindeki modul)
+import retrieval  # noqa: E402  anlamsal arama; ucuncu taraf paketi yalnizca aramada, tembel yuklenir
 import rules_mode  # noqa: E402  A modu: kural tabanli temel yontem (ayni dizindeki modul)
 
 RULES_PATH = Path(rules_mode.__file__).resolve()
@@ -83,6 +85,12 @@ A_MODE_NOTES = [
     "Model olcumleri (token, sunucu sureleri) null'dir; client_elapsed_s kural suresidir.",
     "Kurallar yalnizca docs.json kaynak metinlerinden turetilmistir.",
 ]
+
+B_MODE_NOTES = [
+    "B modu: anlamsal arama + A modunun kural tabanli sablonu (rules_mode.py).",
+    "Kaynaklar elle atanmaz; retrieval.py ile en yakin top-k kaynak bulunur.",
+    "Sira: arama -> uygunluk filtresi -> kural motoru.",
+] + A_MODE_NOTES[1:]
 
 WARMUP_MESSAGES = [
     {"role": "system", "content": "Kisa ve Turkce yanit ver."},
@@ -228,16 +236,21 @@ def build_user_message(
     case: dict[str, Any],
     sources: dict[str, dict[str, Any]],
     filtre: applicability.Filtre | None = None,
+    candidates: list[str] | None = None,
 ) -> str:
     """Yalnizca bu vakanin verisini ve secilmis kaynaklarini iceren kullanici mesaji.
 
     filtre verilirse (uygunluk motoru acik) yalnizca elenmemis kaynaklarin metni
     gonderilir; elenen kaynaklarin METNI modele hic gitmez. Motor kapaliyken ve
     vakada olay_tarihi yokken mesaj, motordan onceki bicimle birebir aynidir.
+    candidates: aramanin buldugu kaynaklar; None ise vakanin elle atanmis source_ids'i.
     """
     lines: list[str] = []
 
-    source_ids = list(filtre.kullanilan) if filtre is not None else list(case["source_ids"])
+    if filtre is not None:
+        source_ids = list(filtre.kullanilan)
+    else:
+        source_ids = list(candidates if candidates is not None else case["source_ids"])
     lines.append("### KAYNAKLAR (veri)")
     if not source_ids:
         lines.append("")
@@ -303,11 +316,12 @@ def build_messages(
     case: dict[str, Any],
     sources: dict[str, dict[str, Any]],
     filtre: applicability.Filtre | None = None,
+    candidates: list[str] | None = None,
 ) -> list[dict[str, str]]:
     """Her vaka icin sifirdan mesaj dizisi. Onceki vaka/cevap tasinmaz."""
     return [
         {"role": "system", "content": system_prompt},
-        {"role": "user", "content": build_user_message(case, sources, filtre)},
+        {"role": "user", "content": build_user_message(case, sources, filtre, candidates)},
     ]
 
 
@@ -613,10 +627,11 @@ def mechanical_observations(content: str | None) -> dict[str, Any]:
 # --------------------------------------------------------------------------
 
 
-def make_run_id(mode: str = "C") -> str:
-    """C modunun adi degismez; A modu dizin adinda '-A-' ile ayirt edilir."""
+def make_run_id(mode: str = "C", use_retrieval: bool = False) -> str:
+    """C modunun adi degismez; A ve B modu dizin adinda '-A-' / '-B-', aramali C
+    modu '-CR-' ile ayirt edilir."""
     stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
-    marker = "-A" if mode == "A" else ""
+    marker = {"A": "-A", "B": "-B"}.get(mode, "-CR" if use_retrieval else "")
     return f"{stamp}{marker}-{uuid.uuid4().hex[:6]}"
 
 
@@ -638,7 +653,7 @@ def _stats(values: list[float]) -> dict[str, float] | None:
 
 def warmup_summary(warmup_result: dict[str, Any] | None, mode: str = "C") -> dict[str, Any]:
     """Isinmanin durumu. Isinma hicbir kosulda vaka istatistiklerine girmez."""
-    if mode == "A":
+    if mode in ("A", "B"):
         return {"durum": "uygulanamaz", "failure_kind": None, "not": None}
     if warmup_result is None:
         return {
@@ -751,6 +766,23 @@ def run_experiment(args: argparse.Namespace) -> int:
         return 0
 
     mode = args.mode
+    if mode == "A" and args.retrieval:
+        raise ExperimentError("A modu elle atanmis kaynaklari kullanir; arama icin --mode B kullanin.")
+    # B modu her zaman aramayla calisir; C modu yalnizca --retrieval ile.
+    use_retrieval = mode == "B" or args.retrieval
+    if not use_retrieval and args.top_k != retrieval.DEFAULT_TOP_K:
+        raise ExperimentError("--top-k yalnizca aramayla (--mode B veya --retrieval) kullanilir.")
+    retriever: retrieval.Retriever | None = None
+    retrieval_meta: dict[str, Any] | None = None
+    if use_retrieval:
+        # Paket, model ve onbellek sonuc dizini acilmadan ONCE dogrulanir.
+        retriever, retrieval_meta = retrieval.open_retriever(
+            Path(args.embeddings).resolve(), docs_path, sources, args.top_k
+        )
+        print(
+            f"Arama: {retrieval_meta['embedding_modeli']} ({retrieval_meta['cihaz']}) "
+            f"| top-k {args.top_k} | kaynaklar elle atanmaz."
+        )
     if mode == "C":
         preflight_info = preflight(args.host, args.model)
         metadata = fetch_model_metadata(args.host, args.model)
@@ -758,6 +790,8 @@ def run_experiment(args: argparse.Namespace) -> int:
             f"Ollama {preflight_info['ollama_version']} | model {args.model} "
             f"| kisa kimlik {preflight_info['model_short_id']}"
         )
+    elif mode == "B":
+        print("B modu: arama + kural tabanli sablon. Ollama'ya istek gonderilmez.")
     else:
         print("A modu: kural tabanli temel yontem. Ollama'ya istek gonderilmez.")
     print(
@@ -766,7 +800,7 @@ def run_experiment(args: argparse.Namespace) -> int:
            else "acik; kaynaklar surum ve olay tarihine gore filtrelenir.")
     )
 
-    run_id = make_run_id(mode)
+    run_id = make_run_id(mode, use_retrieval)
     run_dir = Path(args.results_root).resolve() / run_id
     try:
         run_dir.mkdir(parents=True, exist_ok=False)  # mevcut sonuclar asla ezilmez
@@ -797,18 +831,23 @@ def run_experiment(args: argparse.Namespace) -> int:
             "--no-applicability ile kapatildi; kaynaklar filtrelenmedi."
         ),
     }
+    source_selection = {
+        "kaynak_secimi": "arama" if use_retrieval else "elle",
+        # null: arama yapilmadi (elle atama).
+        "arama": retrieval_meta,
+    }
 
-    if mode == "A":
+    if mode in ("A", "B"):
         run_meta = {
             "run_id": run_id,
-            "mod": "A",
+            "mod": mode,
             "started_at_utc": _utc_now(),
             "model": None,
             "host": None,
             "options": None,
             "auto_retry": 0,
             "concurrency": 1,
-            "ayar_notlari": A_MODE_NOTES,
+            "ayar_notlari": B_MODE_NOTES if mode == "B" else A_MODE_NOTES,
             "girdi_dosyalari": input_files,
             "calistirici_dosyasi": runner_file,
             "kural_motoru_dosyasi": {
@@ -817,6 +856,7 @@ def run_experiment(args: argparse.Namespace) -> int:
                 "not": "Calisma basinda diskteki rules_mode.py dosyasinin ozeti.",
             },
             "uygunluk_motoru": applicability_meta,
+            **source_selection,
             "cevap_anahtari": "expected.jsonl uretim yolunda okunmaz; ozeti bilerek alinmaz.",
             "python_version": sys.version,
             "python_implementation": platform.python_implementation(),
@@ -838,6 +878,7 @@ def run_experiment(args: argparse.Namespace) -> int:
             "girdi_dosyalari": input_files,
             "calistirici_dosyasi": runner_file,
             "uygunluk_motoru": applicability_meta,
+            **source_selection,
             "cevap_anahtari": "expected.jsonl uretim yolunda okunmaz; ozeti bilerek alinmaz.",
             "ollama_version": preflight_info["ollama_version"],
             "api_version_istek_suresi_s": preflight_info["api_version_istek_suresi_s"],
@@ -857,8 +898,8 @@ def run_experiment(args: argparse.Namespace) -> int:
 
     # --- Isinma: sonuclardan ve sure ozetinden ayri tutulur ---
     warmup_result: dict[str, Any] | None = None
-    if mode == "A":
-        pass  # A modunda model yok; isinma uygulanamaz.
+    if mode in ("A", "B"):
+        pass  # A ve B modunda model yok; isinma uygulanamaz.
     elif args.no_warmup:
         print("Isinma istegi atlandi (--no-warmup).")
     else:
@@ -893,26 +934,30 @@ def run_experiment(args: argparse.Namespace) -> int:
                 current_case_id = case["case_id"]
                 print(f"[{index}/{len(cases)}] {case['case_id']} calisiyor...", flush=True)
 
-                # Uygunluk filtresi aramadan ve modelden ONCE calisir.
+                # SIRA SABITTIR: arama -> uygunluk filtresi -> kural motoru veya model.
+                # Uygunluk filtresi aramadan SONRA, modelden ve kural motorundan ONCE
+                # calisir; eledigi kaynak kurala/modele hic ulasmaz.
+                arama = retriever.search(case) if retriever is not None else None
+                candidates = list(arama.kaynaklar) if arama is not None else list(case["source_ids"])
                 filtre = (
-                    applicability.filter_sources(case, sources, list(case["source_ids"]))
+                    applicability.filter_sources(case, sources, candidates)
                     if applicability_on
                     else None
                 )
                 started_at_utc = _utc_now()  # istekten ONCE alinir
-                if mode == "A":
+                if mode in ("A", "B"):
                     messages = None  # modele mesaj gonderilmez
-                    result = rules_mode.run_case(case, list(case["source_ids"]), filtre)
+                    result = rules_mode.run_case(case, candidates, filtre)
                 else:
-                    messages = build_messages(system_prompt, case, sources, filtre)
+                    messages = build_messages(system_prompt, case, sources, filtre, candidates)
                     result = chat_once(args.host, args.model, messages, options, args.timeout)
                 uygunluk = (
                     filtre.kayit()
                     if filtre is not None
                     else {
-                        # Motor kapali: karar verilmedi; tum kaynaklar kullanildi.
+                        # Motor kapali: karar verilmedi; tum aday kaynaklar kullanildi.
                         "degerlendirilen_kaynaklar": None,
-                        "kullanilan_kaynaklar": list(case["source_ids"]),
+                        "kullanilan_kaynaklar": candidates,
                         "elenen_kaynaklar": None,
                         "belirsiz_kaynaklar": None,
                     }
@@ -922,7 +967,11 @@ def run_experiment(args: argparse.Namespace) -> int:
                     "mod": mode,
                     "api_version": case.get("api_version"),
                     "olay_tarihi": case.get("olay_tarihi"),
+                    # Vakanin elle atanmis listesi; aramali kosuda karsilastirma icin korunur.
                     "source_ids": list(case["source_ids"]),
+                    "kaynak_secimi": "arama" if arama is not None else "elle",
+                    "arama_sonuclari": arama.kayit() if arama is not None else None,
+                    "arama_suresi_s": arama.sure_s if arama is not None else None,
                     "uygunluk_motoru_acik": applicability_on,
                     **uygunluk,
                     "model": args.model if mode == "C" else None,
@@ -1000,9 +1049,21 @@ def build_arg_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument(
         "--mode",
-        choices=("A", "C"),
+        choices=("A", "B", "C"),
         default="C",
-        help="C: yerel model (varsayilan). A: kural tabanli temel yontem; modele istek gitmez.",
+        help="C: yerel model (varsayilan). A: kural tabanli temel yontem; modele istek gitmez. "
+        "B: anlamsal arama + A'nin kural sablonu; modele istek gitmez.",
+    )
+    parser.add_argument(
+        "--retrieval",
+        action="store_true",
+        help="C modunda kaynaklari elle atama yerine anlamsal aramayla secer (B modu zaten arar).",
+    )
+    parser.add_argument(
+        "--top-k", type=int, default=retrieval.DEFAULT_TOP_K, help="Aramada donen kaynak sayisi."
+    )
+    parser.add_argument(
+        "--embeddings", default=str(retrieval.DEFAULT_CACHE), help="Kaynak embedding onbellegi."
     )
     parser.add_argument("--host", default=DEFAULT_HOST)
     parser.add_argument("--model", default=DEFAULT_MODEL)
@@ -1037,7 +1098,7 @@ def main(argv: list[str] | None = None) -> int:
     args = build_arg_parser().parse_args(argv)
     try:
         return run_experiment(args)
-    except ExperimentError as exc:
+    except (ExperimentError, retrieval.RetrievalError) as exc:
         print(f"HATA: {exc}", file=sys.stderr)
         return 2
 

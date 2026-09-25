@@ -1,0 +1,57 @@
+{
+  "amac": "Model yukleme maliyetini vaka olcumlerinden ayirmak.",
+  "sure_ozetine_dahil_mi": false,
+  "messages": [
+    {
+      "role": "system",
+      "content": "Kisa ve Turkce yanit ver."
+    },
+    {
+      "role": "user",
+      "content": "Bu bir isinma istegidir. Yalnizca 'hazir' yaz."
+    }
+  ],
+  "options": {
+    "num_ctx": 4096,
+    "num_predict": 384
+  },
+  "ok": true,
+  "failure_kind": null,
+  "client_elapsed_s": 8.924,
+  "istemci_eksi_sunucu_total_s": 2.0479,
+  "http_status": 200,
+  "error": null,
+  "done": true,
+  "done_reason": "stop",
+  "content": "hazir",
+  "thinking": null,
+  "metrics": {
+    "prompt_eval_count": 44,
+    "eval_count": 4,
+    "total_duration_ns": 6876344700,
+    "total_duration_s": 6.8763,
+    "load_duration_ns": 6701456500,
+    "load_duration_s": 6.7015,
+    "prompt_eval_duration_ns": 94111000,
+    "prompt_eval_duration_s": 0.0941,
+    "eval_duration_ns": 64009000,
+    "eval_duration_s": 0.064
+  },
+  "raw_response": {
+    "model": "qwen3:4b-instruct-2507-q4_K_M",
+    "created_at": "2026-09-25T14:21:26.7508015Z",
+    "message": {
+      "role": "assistant",
+      "content": "hazir"
+    },
+    "done": true,
+    "done_reason": "stop",
+    "total_duration": 6876344700,
+    "load_duration": 6701456500,
+    "prompt_eval_count": 44,
+    "prompt_eval_cached_count": 0,
+    "prompt_eval_duration": 94111000,
+    "eval_count": 4,
+    "eval_duration": 64009000
+  }
+}

@@ -149,6 +149,11 @@ metriklerine girer.
   puanlanmadı (insan puanlaması yalnızca ilk C koşusu için yapıldı). 8 kaynak çok
   küçük bir arama uzayıdır; gerçek RAG başarısı çıkarılamaz. Kaynakları, vakaları
   ve beklentileri aynı kişi yazdı. 18 vakalık elle atamalı C koşusu yoktur.
+- Tablo, C18 anahtarı düzeltilmeden önceki anahtarla hesaplandı. C18'den durum
+  ve aile kontrolü kaldırıldıktan sonra durum doğru: A 17 / 17, B 11 / 17, C-arama
+  13 / 17. top-k ablation (yalnızca B): durum doğru k=1 12 / 17, k=2 12 / 17,
+  k=3 11 / 17. Küçük k hatayı üretimden aramaya kaydırdı, azaltmadı; varsayılan
+  k = 3 değişmedi.
 - Rapor: [`ABC_karsilastirma.md`](experiments/first_model/results_sample/ABC_karsilastirma.md).
 
 ## Hızlı başlangıç (Windows / PowerShell)

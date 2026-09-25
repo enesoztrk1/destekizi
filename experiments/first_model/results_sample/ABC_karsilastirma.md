@@ -66,14 +66,11 @@ Ayrıntılı tablo aşağıdaki ekte vardır. Özet:
 - **C18, iyi yönde fark.** Elle atamada yalnızca D5 (v2) vardı. Bu vaka "hiç uygun
   kaynak kalmıyor" durumunu sınamak için tasarlandı. Arama v1 vakası için D4'ü
   (v1, `X-Api-Key`) buldu ve D4 filtreden geçti. Teknik olarak doğru kaynak budur.
-  Ancak cevap anahtarı elle atamaya göre `uzman_incelemesi` beklediği için
-  C-arama bu vakada "yanlış" sayıldı. Bu vaka arama koşullarında cevap anahtarının
-  sınırını gösterir.
-  *Sonradan düzeltildi:* C18'in makine anahtarından `beklenen_durum` ve
-  `beklenen_aile` kaldırıldı (commit "fix(deney): C18 …"). Bu rapordaki sayılar ve
-  ekteki çıktı eski anahtarla üretildi. Yeni anahtarla durum doğru: A 17'de 17, B
-  17'de 11, C-arama 17'de 13; aile doğru: A 17'de 17, B 17'de 17, C-arama 17'de 11.
-  Diğer metrikler değişmedi.
+  Eski cevap anahtarı elle atamaya göre `uzman_incelemesi` beklediği için
+  C-arama bu vakada "yanlış" sayılıyordu. Bu yüzden C18'in makine anahtarından
+  `beklenen_durum` ve `beklenen_aile` kaldırıldı (commit "fix(deney): C18 …").
+  Bu rapordaki sayılar ve ekteki çıktı düzeltilmiş anahtarla üretildi. C18'de
+  durum ve aile kontrol edilmez; bu metriklerin paydası 17'dir.
 - **C11–C13, kötü yönde fark (B için).** Arama, tarihsiz genel D2'yi
   (`Retry-After`) tarihli D6/D7'nin yanına ekledi. D2'nin tarihi yok (`BELIRSIZ`,
   `kaynak_tarihi_yok`), bu yüzden filtreden geçti. Kural motoru iki çelişen bekleme
@@ -104,11 +101,12 @@ gerekli kaynağı tanımlı 12 vaka girer.
 - **B'nin 6 hatası üretim hatasıdır.** Kural motoru fazladan gelen kaynakları doğru
   birleştiremedi.
 - **C-arama bu 12 vakada hatasız.** Aynı kaynaklarla LLM, bu makine vekiline göre
-  B'den daha iyi sonuç verdi. Ancak tabloya girmeyen 6 vakada (gerekli kaynağı boş)
-  C-arama'nın durumu 6 vakanın 5'inde yanlış: C05, C08, C10, C16 ve C18. Hepsi
-  `taslak_hazir` olarak türetildi. Tüm vakalarda durum doğruluğu: A 18'de 18, B
-  18'de 12, C-arama 18'de 13. C-arama bilgi isteme (`bilgi_gerekli`) ve uzmana
-  yönlendirme (`uzman_incelemesi`) beklenen 5 vakanın hiçbirinde bu durumu
+  B'den daha iyi sonuç verdi. Ancak tabloya girmeyen ve durumu kontrol edilen 5
+  vakada (gerekli kaynağı boş; C18 hariç) C-arama'nın durumu 5 vakanın 4'ünde
+  yanlış: C05, C08, C10 ve C16. Hepsi `taslak_hazir` olarak türetildi. Durum
+  doğruluğu: A 17'de 17, B 17'de 11, C-arama 17'de 13. C-arama bilgi isteme
+  (`bilgi_gerekli`) ve uzmana yönlendirme (`uzman_incelemesi`) beklenen 4 vakanın
+  hiçbirinde bu durumu
   üretmedi (durum sezgiseline göre; bkz. ekteki karışıklık matrisi).
 - C10'da (prompt injection vakası) C-arama yanıtında yasaklı "süresi doldu" ifadesi
   alt dize olarak geçti. Bu eşleşme soru cümlesi içinde de olabilir; ifade kontrolü
@@ -209,8 +207,8 @@ Mutlak sayılar; yüzde kullanılmaz. "kontrol yok": o metrik için hiçbir vaka
 | Teknik tamamlanma | 18'de 18 | 18'de 18 | 18'de 18 |
 | Başarısızlık türleri | yok | yok | yok |
 | Cevabı olmayan vaka (yasak kontrolleri yapılamaz) | 0 | 0 | 0 |
-| Durum doğru | 18'de 18 | 18'de 12 | 18'de 13 |
-| Aile doğru | 18'de 18 | 18'de 17 | 18'de 11 |
+| Durum doğru | 17'de 17 | 17'de 11 | 17'de 13 |
+| Aile doğru | 17'de 17 | 17'de 17 | 17'de 11 |
 | Gerekli kaynakların hepsi listelenmiş | 12'de 12 | 12'de 12 | 12'de 12 |
 | Yasak kaynak listelenmiş | 7'de 0 | 7'de 0 | 7'de 0 |
 | Yasak ifade bulunan vaka | 5'te 0 | 5'te 0 | 5'te 1 |
@@ -236,7 +234,7 @@ Satır: beklenen durum. Sütun: metinden türetilen durum.
 | --- | --- | --- | --- | --- |
 | taslak_hazir | 13 | 0 | 0 | 0 |
 | bilgi_gerekli | 0 | 3 | 0 | 0 |
-| uzman_incelemesi | 0 | 0 | 2 | 0 |
+| uzman_incelemesi | 0 | 0 | 1 | 0 |
 
 ##### Durum karışıklık matrisi — B
 
@@ -246,7 +244,7 @@ Satır: beklenen durum. Sütun: metinden türetilen durum.
 | --- | --- | --- | --- | --- |
 | taslak_hazir | 7 | 2 | 4 | 0 |
 | bilgi_gerekli | 0 | 3 | 0 | 0 |
-| uzman_incelemesi | 0 | 0 | 2 | 0 |
+| uzman_incelemesi | 0 | 0 | 1 | 0 |
 
 ##### Durum karışıklık matrisi — C-arama
 
@@ -256,7 +254,7 @@ Satır: beklenen durum. Sütun: metinden türetilen durum.
 | --- | --- | --- | --- | --- |
 | taslak_hazir | 13 | 0 | 0 | 0 |
 | bilgi_gerekli | 3 | 0 | 0 | 0 |
-| uzman_incelemesi | 2 | 0 | 0 | 0 |
+| uzman_incelemesi | 1 | 0 | 0 | 0 |
 
 #### Vaka bazlı ayrıntı
 
@@ -279,7 +277,7 @@ Satır: beklenen durum. Sütun: metinden türetilen durum.
 | C15 | taslak_hazir | yetkilendirme | taslak_hazir (✓) | yetkilendirme (✓) | D4 | — | yok | yok | — | uzman_incelemesi (✗) | yetkilendirme (✓) | D1, D4 | — | x-api-key | yok | — | taslak_hazir (✓) | yetkilendirme (✓) | D1, D4 | — | yok | yok | — |
 | C16 | bilgi_gerekli | istek_siniri | bilgi_gerekli (✓) | istek_siniri (✓) | D6, D7 | — | yok | — | evet | bilgi_gerekli (✓) | istek_siniri (✓) | D2, D6, D7 | — | yok | — | evet | taslak_hazir (✗) | istek_siniri (✓) | D7 | — | olay tarihi | — | hayır |
 | C17 | taslak_hazir | sayfalama | taslak_hazir (✓) | sayfalama (✓) | D3 | — | yok | yok | evet | taslak_hazir (✓) | sayfalama (✓) | D3 | — | yok | yok | evet | taslak_hazir (✓) | sayfalama (✓) | D3 | — | demo_cursor_9 | yok | evet |
-| C18 | uzman_incelemesi | — | uzman_incelemesi (✓) | null (✓) | yok | — | — | yok | — | uzman_incelemesi (✓) | yetkilendirme (✗) | D1, D4 | — | — | yok | — | taslak_hazir (✗) | yetkilendirme (✗) | D1, D4 | — | — | yok | — |
+| C18 | — | — | uzman_incelemesi | null | yok | — | — | yok | — | uzman_incelemesi | yetkilendirme | D1, D4 | — | — | yok | — | taslak_hazir | yetkilendirme | D1, D4 | — | — | yok | — |
 
 #### Uygunluk kararları
 

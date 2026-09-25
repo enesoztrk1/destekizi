@@ -1,0 +1,10 @@
+# Yalnizca HTTP servis katmani (experiments/first_model/api.py) ve testleri icin.
+# run.py, A ve C modlari bu paketler olmadan calisir. B modu icin ayrica
+# requirements.txt gerekir; bu dosya sentence-transformers veya torch KURMAZ.
+# Surumler bu makinede `pip show` ile okunan kurulu surumlerdir (2026-09-25).
+fastapi==0.135.1
+uvicorn==0.41.0
+# fastapi.testclient icin (yalnizca testler).
+httpx==0.28.1
+pydantic==2.12.5
+starlette==0.52.1

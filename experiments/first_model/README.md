@@ -23,7 +23,10 @@ Proje tanımı: [`../../docs/PROJECT.md`](../../docs/PROJECT.md)
 ## Veri akışı
 
 ```
-cases.jsonl (bir vaka)
+cases.jsonl (bir vaka)  veya  POST /v1/analyses (api.py)
+        │
+        ▼
+masking.py: hassas başlık, alan adı ve metin desenleri gizlenir
         │
         ├── A / C: source_ids ile docs.json'dan ELLE SEÇİLMİŞ kaynaklar
         ├── B / C --retrieval: retrieval.py ile ARANAN ilk k kaynak
@@ -46,7 +49,8 @@ results/<run_id>/cases.jsonl   (ham yanıt + ölçümler + hatalar)
 İNSAN değerlendirmesi  →  review_template.md
 ```
 
-Sıra sabittir: **arama → uygunluk filtresi → kural motoru veya model.**
+Sıra sabittir: **maskeleme → arama → uygunluk filtresi → kural motoru veya model.**
+Bu sıra `run.analyze_case` içindedir; çalıştırıcı ve servis aynı fonksiyonu kullanır.
 
 A ve B modunda `prompt.txt` → Ollama adımı yerine `rules_mode.py` çalışır; kurallar
 yalnızca vakanın yapısal alanlarını ve filtreden geçen kaynak kimliklerini kullanır.
@@ -78,6 +82,8 @@ yakaladığı da test edilir.
 | `retrieval.py` | Anlamsal arama: e5-small ile kaynak önbelleği (`--build`) ve vaka başına ilk k kaynak; kosinüs, kesin arama |
 | `embeddings.json` | D1–D8 embedding önbelleği; `docs.json` SHA-256'sına bağlı |
 | `eval/retrieval_metrics.py` | Recall@k, MRR, Precision@k, filtre eleme sayısı ve arama/üretim hata ayrımı |
+| `masking.py` | Hassas veri maskeleme (standart kütüphane); başlık türü korunur |
+| `api.py` | FastAPI servis katmanı: `POST /v1/analyses`, `GET /v1/sources/{id}`, `GET /health` |
 | `applicability.py` | Uygunluk motoru: kaynak × API sürümü × olay tarihi → `UYGUN` / `UYGUN_DEGIL` / `BELIRSIZ` + gerekçe kodu |
 | `rules_mode.py` | A modu kural motoru; her kural D1–D8'deki kaynak cümlesine bağlıdır |
 | `eval/run_eval.py` | Sonuç dizinlerini makine kontrolleriyle karşılaştıran rapor betiği; model çağırmaz |
@@ -138,6 +144,50 @@ Testler:
 ```powershell
 py -3.12 -m unittest discover -s .\experiments\first_model\tests -p "test_*.py" -v
 ```
+
+## Hassas veri maskeleme
+
+Sözleşme: [`EXPERIMENT_SPEC.md` §8.7](../../docs/EXPERIMENT_SPEC.md).
+
+Her vaka, analizden önce `masking.py` ile maskelenir. Arama, kurallar, model ve
+kayıt yalnızca maskelenmiş vakayı görür.
+
+- **Başlıklar:** `Authorization`, `Proxy-Authorization`, `X-Api-Key`, `Cookie`,
+  `Set-Cookie`. Başlığın varlığı ve türü korunur: `Bearer abc.def` → `Bearer ***`.
+- **Alan adları:** `password`, `api_key`, `apikey`, `secret`, `token`,
+  `access_token`, `refresh_token` (iç içe ve liste içinde de).
+- **Serbest metin:** e-posta, Türkiye cep telefonu, JWT, `Bearer <değer>`,
+  metne gömülü `token=…` / `"password": "…"`.
+- Ad karşılaştırması büyük/küçük harf ve `-`/`_` farkını yok sayar.
+- Kayıtta `maskelenen_alanlar` yalnızca yolları listeler; değerleri yazmaz.
+
+**Sınır:** Düzenli ifadelerle çalışır. Listede olmayan alan adlarını, farklı
+biçimde yazılmış numaraları ve serbest metindeki kişi adları gibi kişisel verileri
+bulmaz. Hassas verinin tamamen temizlendiğini garanti etmez.
+
+## Servis (FastAPI)
+
+Sözleşme: [`EXPERIMENT_SPEC.md` §8.8](../../docs/EXPERIMENT_SPEC.md).
+
+```powershell
+py -3.12 -m pip install -r requirements-api.txt
+py -3.12 -m uvicorn api:create_app --factory --app-dir experiments/first_model --port 8000
+```
+
+| Uç nokta | İş |
+| --- | --- |
+| `POST /v1/analyses` | `{"mod": "A", "case_id": "C14"}` veya `{"mod": "C", "vaka": {…cases.jsonl satırı…}}`; yanıt vaka kaydıdır |
+| `GET /v1/sources/{id}` | Kaynak metni ve metadata'sı |
+| `GET /health` | Kaynak verisi, Ollama ve arama bileşenlerini yoklar |
+| `GET /docs` | Otomatik OpenAPI sayfası |
+
+Hata kodları: bilinmeyen kaynak/vaka 404, geçersiz girdi 422, Ollama veya arama
+kullanılamıyor 503, model zaman aşımı 504, kesik/boş model yanıtı 502, beklenmeyen
+hata 500 (ayrıntı yalnızca loglanır). Ayarlar: `DESTEKIZI_OLLAMA_HOST`,
+`DESTEKIZI_MODEL_TIMEOUT_S`. B modu ayrıca `requirements.txt` ister.
+
+Kimlik doğrulama, istek sınırlama, veritabanı, kuyruk ve CORS **yoktur**: servis
+yalnızca yerel makinede deney için tasarlandı. Ağa açık ortamda kullanılmamalıdır.
 
 ## B modu ve anlamsal arama
 

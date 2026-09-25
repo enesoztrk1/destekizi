@@ -34,6 +34,8 @@ Aşama 1 içindeki durum:
 | Uygunluk ablation ölçümü ([`ablation_uygunluk.md`](../experiments/first_model/results_sample/ablation_uygunluk.md)) | Yalnızca A modunda yapıldı; C modu yeniden çalıştırılmadı |
 | B modu ve anlamsal arama (`retrieval.py`), C `--retrieval`, arama metrikleri | Tamamlandı |
 | A/B/C karşılaştırması ([`ABC_karsilastirma.md`](../experiments/first_model/results_sample/ABC_karsilastirma.md)) | Yalnızca makine kontrolleri ve arama metrikleriyle yapıldı |
+| Hassas veri maskeleme (`masking.py`): başlık, alan adı ve metin desenleri | Tamamlandı; düzenli ifadeye dayalı, sınırı EXPERIMENT_SPEC §8.7'de |
+| HTTP servis katmanı (`api.py`, FastAPI): analiz, kaynak, sağlık uç noktaları | Tamamlandı; yalnızca sahte model ve A modu ile test edildi, kimlik doğrulama yok |
 | İnsan puanlaması (`review_template.md`) | **Yalnızca ilk C koşusu** (`20260923T214519Z-661fd9`, C01–C10) için yapıldı; diğer koşular puanlanmadı |
 
 Makine kontrolleri yanıtın teknik doğruluğunu, kaynak desteğinin gerçekliğini ve
@@ -102,6 +104,25 @@ sabitlidir).
 - **Tek yöntem:** Kosinüs benzerliğiyle kesin arama. İndeks, vektör veritabanı,
   hibrit arama, reranker ve sorgu yeniden yazma eklenmedi.
 
+### Bağımlılık kararı: HTTP servis katmanı (25 Eylül 2026)
+
+İkinci üçüncü taraf bağımlılık kararıdır: `fastapi`, `uvicorn` ve test istemcisi
+için `httpx` (sürümler `requirements-api.txt`'te sabitlidir).
+
+- **Neden:** Analizi başka bir araçtan (ör. sonraki turdaki arayüz) çağırabilmek
+  için HTTP arayüzü gerekir. FastAPI girdi ve çıktıyı Pydantic modelleriyle
+  doğrular ve geçersiz girdiye kendiliğinden 422 döner; bu doğrulamayı standart
+  kütüphaneyle yeniden yazmak gerekmez.
+- **Katmanlar ayrı:** `requirements.txt` yalnızca arama (sentence-transformers),
+  `requirements-api.txt` yalnızca servis içindir. Biri diğerini gerektirmez.
+- **İzolasyon:** FastAPI yalnızca `api.py`'de içe aktarılır. `run.py`, A ve C
+  modları standart kütüphaneyle çalışır. Bu, `site-packages` kapalıyken
+  (`py -3.12 -S`) test paketinin çalıştırılmasıyla doğrulandı: API testleri ve
+  gerçek embedding modeli testleri atlandı, diğerleri geçti. CI'da API testleri
+  yalnızca `requirements-api.txt` kurulan ayrı bir işte çalışır.
+- **İnce katman:** Analiz mantığı `run.analyze_case` içindedir. Çalıştırıcı ve
+  servis aynı fonksiyonu kullanır; servis yanıtı vaka kaydının aynısıdır.
+
 ## Öğrenme hedefi
 
 Kullanıcı Python biliyor; uygulamalı AI mühendisliği kavramlarını bu proje
@@ -132,13 +153,15 @@ Aşağıdakiler bilinçli olarak yapılmamıştır ve tamamlanmış sayılmamal�
 - Saat düzeyinde yürürlük ve saat dilimi mantığı (motor yalnızca gün düzeyinde
   çalışır).
 - Büyük dosyaların bölünmesi (500 satır üstü; bölünmesi önerilir, yapılmadı):
-  `run.py` 1107, `tests/test_runner.py` 1009, `eval/run_eval.py` 743,
+  `run.py` 1149, `tests/test_runner.py` 1009, `eval/run_eval.py` 743,
   `rules_mode.py` 696, `tests/test_retrieval.py` 561 satır.
 - LLM/RAG katkısının kural tabanlı temel yöntemle **insan puanlamasına dayalı**
   karşılaştırılması. Temel yöntem (A modu) ve biçimsel karşılaştırma vardır; kalite
   karşılaştırması yoktur.
-- FastAPI, Gradio, PostgreSQL, pgvector, Docker. (Depoda yalnızca davranış
-  testlerini çalıştıran bir CI iş akışı vardır; model çalıştırmaz.)
+- Gradio arayüzü, Docker Compose, PostgreSQL, pgvector. (FastAPI katmanı
+  eklendi. CI davranış ve API testlerini çalıştırır; model çalıştırmaz.)
+- Servis için kimlik doğrulama, istek sınırlama, veritabanı, kuyruk, arka plan
+  görevi, CORS ve akış (streaming).
 - Fine-tuning, agent altyapısı.
 - Gerçek müşteri verisi, canlı ticaret API'si, otomatik mesaj gönderimi.
 - Ücretli model API'si, bulut model, yeni AI aboneliği.

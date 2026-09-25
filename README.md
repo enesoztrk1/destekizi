@@ -196,6 +196,17 @@ py -3.12 .\experiments\first_model\run.py --mode B
 py -3.12 .\experiments\first_model\run.py --retrieval
 ```
 
+Yerel HTTP servisi (FastAPI; ayrı bağımlılık dosyası):
+
+```powershell
+py -3.12 -m pip install -r requirements-api.txt
+py -3.12 -m uvicorn api:create_app --factory --app-dir experiments/first_model --port 8000
+```
+
+Uç noktalar: `POST /v1/analyses`, `GET /v1/sources/{id}`, `GET /health`.
+Kimlik doğrulama, istek sınırlama, veritabanı, kuyruk ve CORS yoktur; çünkü servis
+yalnızca yerel makinede deney için tasarlandı ve ağa açık kullanım için değildir.
+
 Linux/macOS'ta `py -3.12` yerine `python3.12` kullanın.
 
 Ayrıntılar: [`experiments/first_model/README.md`](experiments/first_model/README.md).
@@ -208,8 +219,10 @@ testlerini çalıştırır.
 
 **CI'da Ollama, model veya GPU yoktur.** CI yalnızca çalıştırıcının sahte
 servise karşı davranışını sınar. Model kalitesi veya gerçek model süreleri
-hakkında hiçbir şey göstermez. CI bağımlılık kurmaz ve embedding modeli
-indirmez; gerçek embedding modeli gerektiren testler orada atlanır.
+hakkında hiçbir şey göstermez. Ana test işi bağımlılık kurmaz ve embedding
+modeli indirmez; gerçek embedding modeli ve FastAPI gerektiren testler orada
+atlanır. İkinci iş yalnızca `requirements-api.txt` kurar ve API testlerini
+çalıştırır; sentence-transformers ve torch kurulmaz.
 
 ## Bilinen sınırlar
 
@@ -226,6 +239,12 @@ indirmez; gerçek embedding modeli gerektiren testler orada atlanır.
   doğru davrandığını sınar, model kalitesini kanıtlamaz.
 - **Prompt injection kanıtı yok:** C10 tek bir örnektir; kapsamlı bir prompt
   injection güvenliği kanıtı sayılmaz.
+- **Maskeleme sınırlıdır:** `masking.py` bilinen başlık ve alan adlarını, e-posta,
+  Türkiye cep telefonu ve JWT desenlerini düzenli ifadelerle gizler. Listede
+  olmayan alanlardaki sırları ve serbest metindeki kişi adları gibi kişisel
+  verileri bulmaz; hassas verinin tamamen temizlendiğini garanti etmez.
+- **Servis yerel kullanım içindir:** Kimlik doğrulama ve istek sınırlama yoktur.
+  Servis yalnızca sahte model ve A modu ile test edildi; yük altında ölçülmedi.
 
 ## Yol haritası
 
@@ -242,10 +261,13 @@ indirmez; gerçek embedding modeli gerektiren testler orada atlanır.
 4. **Anlamsal arama ve A/B/C karşılaştırması — tamamlandı.** B modu,
    `--retrieval`, Recall@k / MRR / Precision@k ve arama/üretim hata ayrımı.
    8 kaynaklı küçük arama uzayında ölçüldü.
-5. **Daha sonra:** büyük kaynak kümesinde arama ve daha geniş değerlendirme
+5. **Hassas veri maskeleme ve HTTP servisi — tamamlandı.** `masking.py`
+   (düzenli ifadeye dayalı; sınırı yukarıda) ve FastAPI katmanı (`api.py`).
+6. **Sonraki tur:** Gradio arayüzü ve Docker Compose ile paketleme.
+7. **Daha sonra:** büyük kaynak kümesinde arama ve daha geniş değerlendirme
    altyapısı.
 
-1. madde kısmen yapıldı; 5. madde yapılmadı. Tam liste: [`docs/PROJECT.md`](docs/PROJECT.md)
+1. madde kısmen yapıldı; 6. ve 7. maddeler yapılmadı. Tam liste: [`docs/PROJECT.md`](docs/PROJECT.md)
 → "Geleceğe bırakılan işler".
 
 ## Lisans

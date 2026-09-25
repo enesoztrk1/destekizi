@@ -506,6 +506,98 @@ yanlış* arama veya filtre hatasıdır.
 ölçmez. 8 kaynaklı arama uzayı çok küçüktür; buradan gerçek RAG başarısı
 çıkarılamaz. Kaynakları, vakaları ve beklentileri aynı kişi yazdı.
 
+### 8.7 Hassas veri maskeleme (`masking.py`)
+
+**Akıştaki yeri:** Vaka okunduktan hemen sonra, her şeyden önce. Sıra:
+oku → **maskele** → arama → uygunluk filtresi → kural motoru veya model. Maskeleme
+`run.analyze_case`'in ilk adımıdır. Çalıştırıcı (`run.py`) ve servis (`api.py`)
+aynı fonksiyonu kullanır. Arama sorgusu, kurallar, modele giden mesaj
+(`messages`) ve `cases.jsonl` kaydı yalnızca maskelenmiş vakayı görür.
+
+**Maskelenenler:**
+
+| Tür | Kapsam | Sonuç |
+| --- | --- | --- |
+| HTTP başlığı (sözlük anahtarı, büyük/küçük harf duyarsız) | `Authorization`, `Proxy-Authorization` | Şema korunur: `Bearer abc.def` → `Bearer ***`, `Basic …` → `Basic ***`; şemasız değer → `***` |
+| | `X-Api-Key` | `***` |
+| | `Cookie` | Çerez adları korunur: `session=***; theme=***` |
+| | `Set-Cookie` | İlk çiftin değeri gizlenir, öznitelikler korunur: `sid=***; Path=/; HttpOnly` |
+| JSON alan adı (iç içe nesnelerde ve listelerde, büyük/küçük harf duyarsız) | `password`, `api_key`, `apikey`, `secret`, `token`, `access_token`, `refresh_token` | Değer (iç içe nesne dahil) `***`; `null` korunur |
+| Serbest metin (tüm metin değerleri) | Metne gömülü `token=…`, `"access_token": "…"` (metin olarak JSON gövdesi, URL sorgusu) | Anahtar korunur: `api_key=***` |
+| | e-posta | `<e-posta>` |
+| | Türkiye cep telefonu (`+90`/`0090`/`0` önekli veya öneksiz `5xx xxx xx xx`; boşluk veya tire) | `<telefon>` |
+| | JWT (`eyJ` ile başlayan üç parçalı dizi) | `<jwt>` |
+| | `Bearer`/`Basic` + en az 8 karakterlik değer | `Bearer ***` |
+
+**Korunanlar (teşhis bilgisi):** Başlığın **varlığı** ve **türü** korunur; yalnızca
+değer gizlenir. Maskelemeden sonra da "Authorization başlığı var mı, Bearer mı Basic
+mi?" sorusu cevaplanabilir. Alan adları, yapı, sayılar, tarihler, hata kodları,
+`Retry-After` gibi hassas olmayan başlıklar ve `authorization_present` gibi
+varlık bayrakları değişmez. Boş, `null` ve `true`/`false` başlık değeri olduğu gibi
+kalır. Hassas başlığın değeri liste veya nesneyse her öğe aynı kuralla, sayıysa
+tamamen gizlenir. Başlık ve alan adı karşılaştırması `-` ve `_` karakterlerini yok
+sayar (`api-key`, `X_API_KEY`, `accessToken` de eşleşir).
+
+**Kayıt:** Vaka kaydına `maskelenen_alanlar` yazılır: değişen alanların yolu
+(ör. `request.headers.Authorization`, `ticket (e_posta)`). Değerler yazılmaz; boş
+liste, maskelenecek değer bulunmadığını gösterir. `run_meta.json → maskeleme`
+alanı `masking.py` SHA-256 özetini taşır.
+
+**Mevcut veriye etkisi:** C01–C18'de maskelenecek değer yoktur (testle
+sabitlendi). Modele giden mesajlar ve kural çıktısı değişmedi. Bu yüzden mevcut
+örnek koşular geçerliliğini korur. Bu koşuların kayıtlarında `maskelenen_alanlar`
+alanı yoktur.
+
+**Sınır:** Modül sabit alan adları ve düzenli ifadelerle çalışır. Listede
+olmayan alan adlarındaki sırları, farklı biçimde yazılmış telefon numaralarını
+veya anahtarları ve serbest metindeki kişi adları, adresler gibi kişisel verileri
+**bulmaz**. Serbest metinde `Bearer`/`Basic` dışındaki şemalar (ör. `Token …`) ve 8
+karakterden kısa `Bearer` değerleri yakalanmaz. Ayraçsız, 5 ile başlayan 10 haneli
+bir sayı (ör. bir kod) telefon sanılıp gizlenebilir. Yalnızca bilinen kalıpları
+gizler; hassas verinin tamamen temizlendiğine dair bir güvence değildir.
+
+### 8.8 HTTP servis sözleşmesi (`api.py`)
+
+İnce bir katmandır: iş mantığı `run.analyze_case`, `masking.py`, `retrieval.py`
+ve `applicability.py` içindedir. FastAPI yalnızca `api.py`'de içe aktarılır.
+Bağımlılıklar `requirements-api.txt` dosyasındadır.
+
+| Uç nokta | İş |
+| --- | --- |
+| `POST /v1/analyses` | Analiz. Gövde: `mod` (`"A"`, `"B"`, `"C"`), `vaka` (`cases.jsonl` satırıyla aynı yapı) **veya** `case_id` (geliştirme vakası), isteğe bağlı `uygunluk_motoru` (varsayılan `true`) ve `top_k` (varsayılan 3, yalnızca B). Yanıt: vaka kaydının aynısı (`run.analyze_case` çıktısı). |
+| `GET /v1/sources/{id}` | Kaynağın metni ve metadata'sı (`title`, `api_versions`, `valid_from`, `valid_to` …) |
+| `GET /health` | Bileşenleri yoklar: kaynak verisi (`docs.json` yeniden okunur ve özet karşılaştırılır), Ollama (`/api/version` ve `/api/tags`, model listede mi), arama (paket var mı, önbellek geçerli mi) |
+
+**Girdi doğrulaması (Pydantic, 422):** Bilinmeyen üst düzey alan, `vaka` ile
+`case_id`'nin ikisi birden veya hiçbiri, `ticket` boş veya 4000 karakterden uzun,
+`request` / `response` JSON olarak 16 384 bayttan büyük, `api_version` `v<sayı>`
+değil, `olay_tarihi` geçersiz tarih, `source_ids` 8'den fazla veya kimlik biçimi
+dışında, `case_id` biçim dışında, A/C modunda `source_ids` boş, `top_k` 1–8 dışında.
+422 yanıtı her hata için yalnızca `loc`, `msg` ve `type` döndürür. FastAPI'nin
+varsayılan yanıtındaki `input` alanı bilinçli olarak atılır; aksi halde
+maskelenmemiş girdi istemciye geri yazılırdı.
+
+**Hata kodları:**
+
+| Durum | Kod |
+| --- | --- |
+| Bilinmeyen kaynak (`/v1/sources/{id}` veya `vaka.source_ids`) ya da `case_id` | 404 |
+| Geçersiz girdi | 422 |
+| Ollama veya model erişilemez (C); arama paketi/önbelleği kullanılamaz (B) | 503 |
+| Model çağrısı zaman aşımı (`DESTEKIZI_MODEL_TIMEOUT_S`, varsayılan 180 s) | 504 |
+| Model yanıtı kesik, boş, bozuk JSON veya Ollama HTTP hatası (`ok=false`) | 502; başarı gibi sunulmaz, `failure_kind` ve hata loglanır |
+| Beklenmeyen hata | 500; yalnızca `hata_kimligi` döner, ayrıntı loglanır |
+
+**Sağlık durumu:** Kaynak verisi okunamıyor veya servis başladıktan sonra
+değişmişse `bozuk` (503). Ollama veya arama kullanılamıyorsa `kismi` (200); bu
+durumda servis A modunda çalışır. Hepsi yerindeyse `ok` (200). Embedding modeli
+sağlık kontrolünde yüklenmez; yalnızca paket, önbellek ve yerel model dosyalarının
+varlığı yoklanır. Model ilk B isteğinde yüklenir; yükleme orada bozulursa istek
+503 alır.
+
+**Kapsam dışı:** kimlik doğrulama, istek sınırlama, veritabanı, kuyruk, arka plan
+görevi, CORS, akış (streaming). Servis yerel geliştirme ve deney içindir.
+
 ## 9. Öğrenme soruları
 
 Bu aşamanın sonunda şu sorular açıklanabilir olmalıdır:

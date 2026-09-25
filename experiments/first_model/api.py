@@ -1,6 +1,6 @@
 """Destekizi - ince HTTP servis katmani (FastAPI).
 
-Is mantigi burada DEGILDIR: analiz run.analyze_case, maskeleme masking.py, arama
+Is mantigi burada DEGILDIR: analiz pipeline.analyze_case, maskeleme masking.py, arama
 retrieval.py, uygunluk applicability.py icindedir. Bu dosya yalnizca girdiyi
 dogrular, hatalari HTTP durum kodlarina cevirir ve kaydi dondurur.
 
@@ -38,7 +38,9 @@ if str(HERE) not in sys.path:
     sys.path.insert(0, str(HERE))
 
 import retrieval  # noqa: E402
-import run  # noqa: E402
+import inputs  # noqa: E402
+import model_client  # noqa: E402
+import pipeline  # noqa: E402
 
 LOG = logging.getLogger("destekizi.api")
 
@@ -63,18 +65,18 @@ class Settings:
     prompt_path: Path = HERE / "prompt.txt"
     cases_path: Path = HERE / "cases.jsonl"
     embeddings_path: Path = retrieval.DEFAULT_CACHE
-    ollama_host: str = run.DEFAULT_HOST
-    model: str = run.DEFAULT_MODEL
-    model_timeout_s: int = run.DEFAULT_TIMEOUT_S
+    ollama_host: str = model_client.DEFAULT_HOST
+    model: str = model_client.DEFAULT_MODEL
+    model_timeout_s: int = model_client.DEFAULT_TIMEOUT_S
     options: dict[str, Any] = field(
-        default_factory=lambda: {"num_ctx": run.DEFAULT_NUM_CTX, "num_predict": run.DEFAULT_NUM_PREDICT}
+        default_factory=lambda: {"num_ctx": model_client.DEFAULT_NUM_CTX, "num_predict": model_client.DEFAULT_NUM_PREDICT}
     )
 
     @classmethod
     def from_env(cls) -> "Settings":
         return cls(
-            ollama_host=os.environ.get("DESTEKIZI_OLLAMA_HOST", run.DEFAULT_HOST),
-            model_timeout_s=int(os.environ.get("DESTEKIZI_MODEL_TIMEOUT_S", run.DEFAULT_TIMEOUT_S)),
+            ollama_host=os.environ.get("DESTEKIZI_OLLAMA_HOST", model_client.DEFAULT_HOST),
+            model_timeout_s=int(os.environ.get("DESTEKIZI_MODEL_TIMEOUT_S", model_client.DEFAULT_TIMEOUT_S)),
         )
 
 
@@ -133,7 +135,7 @@ class AnalizIstegi(BaseModel):
 
 
 class AnalizSonucu(BaseModel):
-    """cases.jsonl kaydiyla ayni alanlar (run.analyze_case ciktisi). Temel alanlar
+    """cases.jsonl kaydiyla ayni alanlar (pipeline.analyze_case ciktisi). Temel alanlar
     dogrulanir; kaydin geri kalani (olcumler, mesajlar) oldugu gibi dondurulur."""
 
     model_config = ConfigDict(extra="allow")
@@ -175,10 +177,10 @@ class _Unavailable(Exception):
 def create_app(settings: Settings | None = None) -> FastAPI:
     settings = settings or Settings.from_env()
     # Veri acilista bir kez yuklenir ve dogrulanir; bozuksa servis baslamaz.
-    sources = run.load_sources(settings.docs_path)
-    system_prompt = run.read_text(settings.prompt_path)
-    dev_cases = {c["case_id"]: c for c in run.load_cases(settings.cases_path)}
-    docs_sha = run.sha256_file(settings.docs_path)
+    sources = inputs.load_sources(settings.docs_path)
+    system_prompt = inputs.read_text(settings.prompt_path)
+    dev_cases = {c["case_id"]: c for c in inputs.load_cases(settings.cases_path)}
+    docs_sha = inputs.sha256_file(settings.docs_path)
     retrievers: dict[int, retrieval.Retriever] = {}
 
     app = FastAPI(title="Destekizi", version="1", docs_url="/docs", redoc_url=None)
@@ -229,12 +231,12 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         retriever = _retriever(body.top_k) if body.mod == "B" else None
         if body.mod == "C":
             try:
-                run.preflight(settings.ollama_host, settings.model)
-            except run.ExperimentError as exc:
+                model_client.preflight(settings.ollama_host, settings.model)
+            except inputs.ExperimentError as exc:
                 raise _Unavailable(503, f"Yerel model kullanilamiyor: {exc}") from exc
         # Tarih ve surum bicimi Pydantic modelinde dogrulandi; burada yakalanmayan her
         # istisna beklenmeyen hatadir (500), veri hatasi gibi gosterilmez.
-        record = run.analyze_case(
+        record = pipeline.analyze_case(
             case,
             mode=body.mod,
             sources=sources,
@@ -301,9 +303,9 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
 def _check_sources(settings: Settings, loaded_sha: str) -> dict[str, Any]:
     try:
-        current = run.load_sources(settings.docs_path)
-        sha = run.sha256_file(settings.docs_path)
-    except run.ExperimentError as exc:
+        current = inputs.load_sources(settings.docs_path)
+        sha = inputs.sha256_file(settings.docs_path)
+    except inputs.ExperimentError as exc:
         return {"durum": "hata", "mesaj": str(exc)}
     if sha != loaded_sha:
         return {"durum": "degisti", "mesaj": "docs.json servis basladiktan sonra degisti; yeniden baslatin.",
@@ -314,8 +316,8 @@ def _check_sources(settings: Settings, loaded_sha: str) -> dict[str, Any]:
 def _check_ollama(settings: Settings) -> dict[str, Any]:
     host = settings.ollama_host
     try:
-        version = run._http_json(f"{host}/api/version", timeout=HEALTH_TIMEOUT_S)
-        tags = run._http_json(f"{host}/api/tags", timeout=HEALTH_TIMEOUT_S)
+        version = model_client._http_json(f"{host}/api/version", timeout=HEALTH_TIMEOUT_S)
+        tags = model_client._http_json(f"{host}/api/tags", timeout=HEALTH_TIMEOUT_S)
     except Exception as exc:  # noqa: BLE001 - yoklama; ayrinti yalnizca tur olarak dondurulur
         return {"durum": "erisilemez", "mesaj": f"{host} ({type(exc).__name__})", "gerekli_mod": "C"}
     models = tags.get("models") if isinstance(tags, dict) else None

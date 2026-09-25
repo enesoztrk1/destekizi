@@ -120,7 +120,7 @@ için `httpx` (sürümler `requirements-api.txt`'te sabitlidir).
   (`py -3.12 -S`) test paketinin çalıştırılmasıyla doğrulandı: API testleri ve
   gerçek embedding modeli testleri atlandı, diğerleri geçti. CI'da API testleri
   yalnızca `requirements-api.txt` kurulan ayrı bir işte çalışır.
-- **İnce katman:** Analiz mantığı `run.analyze_case` içindedir. Çalıştırıcı ve
+- **İnce katman:** Analiz mantığı `pipeline.analyze_case` içindedir. Çalıştırıcı ve
   servis aynı fonksiyonu kullanır; servis yanıtı vaka kaydının aynısıdır.
 
 ## Öğrenme hedefi

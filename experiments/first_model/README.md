@@ -50,14 +50,14 @@ results/<run_id>/cases.jsonl   (ham yanıt + ölçümler + hatalar)
 ```
 
 Sıra sabittir: **maskeleme → arama → uygunluk filtresi → kural motoru veya model.**
-Bu sıra `run.analyze_case` içindedir; çalıştırıcı ve servis aynı fonksiyonu kullanır.
+Bu sıra `pipeline.analyze_case` içindedir; çalıştırıcı ve servis aynı fonksiyonu kullanır.
 
 A ve B modunda `prompt.txt` → Ollama adımı yerine `rules_mode.py` çalışır; kurallar
 yalnızca vakanın yapısal alanlarını ve filtreden geçen kaynak kimliklerini kullanır.
 
 `expected.jsonl` üretim akışının **dışındadır**. Çalıştırıcı (`run.py`) ve kural
-motoru onu okumaz; yalnızca değerlendirme betiği (`eval/run_eval.py`) okur. `run.read_text`
-ve `run.sha256_file` şu durumlarda hata verir:
+motoru onu okumaz; yalnızca değerlendirme betiği (`eval/run_eval.py`) okur. `inputs.read_text`
+ve `inputs.sha256_file` şu durumlarda hata verir:
 
 - dosya adı `expected.jsonl` ise (büyük/küçük harf duyarsız);
 - yol, gerçek anahtar dosyasıyla aynı dosyaysa (`os.path.samefile`, ör. hard link).

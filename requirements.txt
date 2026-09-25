@@ -1,7 +1,13 @@
 # Yalnizca B modu ve C modu --retrieval (anlamsal arama) icin gerekir.
 # A ve C modlari (elle kaynak atama) yalnizca Python 3.12 standart kutuphanesiyle calisir.
 # Surumler bu makinede `pip show` ile okunan kurulu surumlerdir (2026-09-25).
-# torch bu makinede CPU derlemesidir (2.9.1+cpu); embedding modeli CPU'da calisir.
+# torch: bu makinede kurulu olan CPU derlemesidir (2.9.1+cpu); embedding modeli CPU'da
+# calisir. `torch==2.9.1` satiri bu derlemeyi SECMEZ: Linux'ta PyPI varsayilan olarak
+# CUDA derlemesini (ve buyuk CUDA paketlerini) indirebilir. Yalnizca CPU isteniyorsa
+# torch'u once CPU dizininden kurun, sonra bu dosyayi kurun:
+#   pip install torch==2.9.1 --index-url https://download.pytorch.org/whl/cpu
+# Surum satiri degistirilmedi: `+cpu` yerel surum etiketi PyPI'da yoktur ve
+# diger platformlarda kurulumu kirar.
 sentence-transformers==6.1.0
 transformers==5.17.0
 torch==2.9.1

@@ -56,7 +56,7 @@ Doğrulanmış ortam (kullanıcının terminal çıktılarıyla):
 | Sistem | Windows 11 / PowerShell |
 | Python | 3.12.7 |
 | Git | 2.48.1.windows.1 |
-| Ollama (istemci + sunucu) | 0.34.3 |
+| Ollama sunucusu | 0.34.4 — `20260925T142117Z-CR-0e7f03` koşusunun `run_meta.json → ollama_version` alanından okundu (25 Eylül 2026). Önceki kayıt 0.34.3 idi; istemci sürümü bu koşuda kaydedilmedi. |
 | GPU | NVIDIA GeForce RTX 4050 Laptop GPU |
 | Toplam VRAM | 6141 MiB |
 | NVIDIA sürücüsü | 596.36 |

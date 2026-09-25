@@ -300,12 +300,16 @@ def open_retriever(
     sources: dict[str, dict[str, Any]],
     top_k: int,
     loader: Callable[[], Embedder] | None = None,
+    revision_lookup: Callable[[str], str | None] | None = None,
 ) -> tuple[Retriever, dict[str, Any]]:
     """Once paket/model (kurulum hatasi once gorunsun), sonra onbellek dogrulanir."""
     started = time.perf_counter()
     embedder = (loader or load_embedder)()
     load_s = round(time.perf_counter() - started, 6)
     cache = load_cache(cache_path, docs_path, sources)
+    revision_state = check_revision(
+        cache.get("model_revizyonu"), (revision_lookup or _model_revision)(EMBEDDING_MODEL)
+    )
     retriever = Retriever(embedder, cache, top_k)
     meta = {
         "retrieval_py_sha256": sha256_file(Path(__file__).resolve()),
@@ -316,9 +320,38 @@ def open_retriever(
         "onekler": {"kaynak": PASSAGE_PREFIX, "sorgu": QUERY_PREFIX},
         "benzerlik": "kosinus (normalize vektorlerde ic carpim), kesin arama, indeks yok",
         "model_yukleme_suresi_s": load_s,
+        "revizyon_kontrolu": revision_state,
         "onbellek": cache_summary(cache_path, cache),
     }
     return retriever, meta
+
+
+def check_revision(cached: str | None, loaded: str | None) -> str:
+    """Onbellegi ureten model revizyonu ile yuklenen modelinkini karsilastirir.
+
+    Iki revizyon da biliniyor ve farkliysa hata: baska agirliklarla uretilmis
+    kaynak vektorleri yeni sorgu vektorleriyle sessizce karsilastirilmasin.
+
+    Biri bilinmiyorsa (Hugging Face yerel meta verisi yok, model yerel bir yoldan
+    yuklendi veya eski onbellek alani tasimiyor) calisma DURMAZ; uyari yazilir ve
+    durum run_meta'ya kaydedilir. Gerekce: revizyonun bilinmemesi uyusmazlik
+    kaniti degildir; model adi, docs.json ozeti, boyut ve normalizasyon kontrolleri
+    yine gecerlidir. Durdurmak, meta veri eksik diye B modunu kullanilamaz yapardi.
+    """
+    if cached and loaded:
+        if cached != loaded:
+            raise RetrievalError(
+                f"Embedding onbellegi baska model revizyonuyla uretilmis: onbellek {cached[:12]}..., "
+                f"yuklenen model {loaded[:12]}.... Yeniden uretin: {BUILD_HINT}"
+            )
+        return "eslesti"
+    missing = "onbellek" if not cached else "yuklenen model"
+    print(
+        f"UYARI: embedding model revizyonu dogrulanamadi ({missing} revizyonu bilinmiyor); "
+        "devam ediliyor.",
+        file=sys.stderr,
+    )
+    return f"dogrulanamadi: {missing} revizyonu bilinmiyor"
 
 
 # --------------------------------------------------------------------------

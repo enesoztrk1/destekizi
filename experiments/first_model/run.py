@@ -38,11 +38,13 @@ if str(HERE) not in sys.path:
     sys.path.insert(0, str(HERE))
 
 import applicability  # noqa: E402  kaynak surum/yururluk filtresi (ayni dizindeki modul)
+import masking  # noqa: E402  hassas deger maskeleme; standart kutuphane
 import retrieval  # noqa: E402  anlamsal arama; ucuncu taraf paketi yalnizca aramada, tembel yuklenir
 import rules_mode  # noqa: E402  A modu: kural tabanli temel yontem (ayni dizindeki modul)
 
 RULES_PATH = Path(rules_mode.__file__).resolve()
 APPLICABILITY_PATH = Path(applicability.__file__).resolve()
+MASKING_PATH = Path(masking.__file__).resolve()
 
 DEFAULT_HOST = "http://localhost:11434"
 DEFAULT_MODEL = "qwen3:4b-instruct-2507-q4_K_M"
@@ -746,6 +748,76 @@ def _write_summary(run_dir: Path, summary: dict[str, Any]) -> None:
     )
 
 
+def analyze_case(
+    case: dict[str, Any],
+    *,
+    mode: str,
+    sources: dict[str, dict[str, Any]],
+    system_prompt: str,
+    retriever: retrieval.Retriever | None,
+    applicability_on: bool,
+    host: str,
+    model: str,
+    options: dict[str, Any],
+    timeout: int,
+) -> dict[str, Any]:
+    """Tek vakanin analiz kaydi. Calistirici ve servis (api.py) ayni yolu kullanir.
+
+    SIRA SABITTIR: maskeleme -> arama -> uygunluk filtresi -> kural motoru veya model.
+    Maskeleme ilk adimdir: arama sorgusu, kurallar, modele giden mesaj ve kayit
+    yalnizca maskelenmis vakayi gorur. Uygunluk filtresi aramadan SONRA, modelden ve
+    kural motorundan ONCE calisir; eledigi kaynak kurala/modele hic ulasmaz.
+    """
+    case, maskelenen = masking.mask_case(case)
+    arama = retriever.search(case) if retriever is not None else None
+    candidates = list(arama.kaynaklar) if arama is not None else list(case["source_ids"])
+    filtre = (
+        applicability.filter_sources(case, sources, candidates)
+        if applicability_on
+        else None
+    )
+    started_at_utc = _utc_now()  # istekten ONCE alinir
+    if mode in ("A", "B"):
+        messages = None  # modele mesaj gonderilmez
+        result = rules_mode.run_case(case, candidates, filtre)
+    else:
+        messages = build_messages(system_prompt, case, sources, filtre, candidates)
+        result = chat_once(host, model, messages, options, timeout)
+    uygunluk = (
+        filtre.kayit()
+        if filtre is not None
+        else {
+            # Motor kapali: karar verilmedi; tum aday kaynaklar kullanildi.
+            "degerlendirilen_kaynaklar": None,
+            "kullanilan_kaynaklar": candidates,
+            "elenen_kaynaklar": None,
+            "belirsiz_kaynaklar": None,
+        }
+    )
+    return {
+        "case_id": case["case_id"],
+        "mod": mode,
+        "api_version": case.get("api_version"),
+        "olay_tarihi": case.get("olay_tarihi"),
+        # Vakanin elle atanmis listesi; aramali kosuda karsilastirma icin korunur.
+        "source_ids": list(case.get("source_ids") or []),
+        # Maskelenen alanlarin yolu (degerleri degil); bos liste: maskelenecek deger yok.
+        "maskelenen_alanlar": maskelenen,
+        "kaynak_secimi": "arama" if arama is not None else "elle",
+        "arama_sonuclari": arama.kayit() if arama is not None else None,
+        "arama_suresi_s": arama.sure_s if arama is not None else None,
+        "uygunluk_motoru_acik": applicability_on,
+        **uygunluk,
+        "model": model if mode == "C" else None,
+        "started_at_utc": started_at_utc,
+        "request_options": options if mode == "C" else None,
+        "messages": messages,
+        "kural_karari": None,
+        **result,
+        "mekanik_gozlem": mechanical_observations(result.get("content")),
+    }
+
+
 def run_experiment(args: argparse.Namespace) -> int:
     prompt_path = Path(args.prompt).resolve()
     docs_path = Path(args.docs).resolve()
@@ -835,6 +907,11 @@ def run_experiment(args: argparse.Namespace) -> int:
         "kaynak_secimi": "arama" if use_retrieval else "elle",
         # null: arama yapilmadi (elle atama).
         "arama": retrieval_meta,
+        "maskeleme": {
+            "path": str(MASKING_PATH),
+            "sha256": sha256_file(MASKING_PATH),
+            "not": "Her vaka analizden once masking.mask_case ile maskelenir.",
+        },
     }
 
     if mode in ("A", "B"):
@@ -934,54 +1011,19 @@ def run_experiment(args: argparse.Namespace) -> int:
                 current_case_id = case["case_id"]
                 print(f"[{index}/{len(cases)}] {case['case_id']} calisiyor...", flush=True)
 
-                # SIRA SABITTIR: arama -> uygunluk filtresi -> kural motoru veya model.
-                # Uygunluk filtresi aramadan SONRA, modelden ve kural motorundan ONCE
-                # calisir; eledigi kaynak kurala/modele hic ulasmaz.
-                arama = retriever.search(case) if retriever is not None else None
-                candidates = list(arama.kaynaklar) if arama is not None else list(case["source_ids"])
-                filtre = (
-                    applicability.filter_sources(case, sources, candidates)
-                    if applicability_on
-                    else None
+                record = analyze_case(
+                    case,
+                    mode=mode,
+                    sources=sources,
+                    system_prompt=system_prompt,
+                    retriever=retriever,
+                    applicability_on=applicability_on,
+                    host=args.host,
+                    model=args.model,
+                    options=options,
+                    timeout=args.timeout,
                 )
-                started_at_utc = _utc_now()  # istekten ONCE alinir
-                if mode in ("A", "B"):
-                    messages = None  # modele mesaj gonderilmez
-                    result = rules_mode.run_case(case, candidates, filtre)
-                else:
-                    messages = build_messages(system_prompt, case, sources, filtre, candidates)
-                    result = chat_once(args.host, args.model, messages, options, args.timeout)
-                uygunluk = (
-                    filtre.kayit()
-                    if filtre is not None
-                    else {
-                        # Motor kapali: karar verilmedi; tum aday kaynaklar kullanildi.
-                        "degerlendirilen_kaynaklar": None,
-                        "kullanilan_kaynaklar": candidates,
-                        "elenen_kaynaklar": None,
-                        "belirsiz_kaynaklar": None,
-                    }
-                )
-                record = {
-                    "case_id": case["case_id"],
-                    "mod": mode,
-                    "api_version": case.get("api_version"),
-                    "olay_tarihi": case.get("olay_tarihi"),
-                    # Vakanin elle atanmis listesi; aramali kosuda karsilastirma icin korunur.
-                    "source_ids": list(case["source_ids"]),
-                    "kaynak_secimi": "arama" if arama is not None else "elle",
-                    "arama_sonuclari": arama.kayit() if arama is not None else None,
-                    "arama_suresi_s": arama.sure_s if arama is not None else None,
-                    "uygunluk_motoru_acik": applicability_on,
-                    **uygunluk,
-                    "model": args.model if mode == "C" else None,
-                    "started_at_utc": started_at_utc,
-                    "request_options": options if mode == "C" else None,
-                    "messages": messages,
-                    "kural_karari": None,
-                    **result,
-                    "mekanik_gozlem": mechanical_observations(result.get("content")),
-                }
+                result = record
                 handle.write(json.dumps(record, ensure_ascii=False) + "\n")
                 handle.flush()
                 records.append(record)

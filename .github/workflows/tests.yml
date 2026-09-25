@@ -29,7 +29,11 @@ jobs:
         with:
           python-version: "3.12"
 
-      # Bağımlılık kurulumu yok: proje yalnızca Python standart kütüphanesini kullanır.
+      # Bağımlılık kurulumu yok (bilinçli). requirements.txt yalnızca B modu ve
+      # C --retrieval için gerekir; A/C modları ve testlerin çoğu standart
+      # kütüphaneyle çalışır. Arama testleri sahte embedding kullanır. Gerçek
+      # embedding modeli gerektiren testler (RealModelTest) sentence-transformers
+      # veya yerel model yokken skipUnless ile atlanır; CI'da model İNDİRİLMEZ.
 
       - name: Veri doğrulaması (modele istek göndermez)
         run: python experiments/first_model/run.py --validate-only

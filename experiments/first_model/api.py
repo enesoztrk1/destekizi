@@ -21,15 +21,17 @@ import json
 import logging
 import os
 import sys
+import threading
 import uuid
 from dataclasses import dataclass, field
 from datetime import date
 from pathlib import Path
-from typing import Any, Literal
+from typing import Annotated, Any, Literal
 
 from fastapi import FastAPI, HTTPException, Request
+from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
-from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
+from pydantic import BaseModel, ConfigDict, Field, StringConstraints, field_validator, model_validator
 
 HERE = Path(__file__).resolve().parent
 if str(HERE) not in sys.path:
@@ -46,6 +48,8 @@ MAX_TICKET_CHARS = 4000
 MAX_RECORD_BYTES = 16_384  # request ve response nesnelerinin her biri, JSON olarak
 MAX_SOURCE_IDS = 8
 HEALTH_TIMEOUT_S = 3
+
+SourceId = Annotated[str, StringConstraints(max_length=16, pattern=r"^[A-Za-z0-9_-]+$")]
 
 
 # --------------------------------------------------------------------------
@@ -92,7 +96,8 @@ class Vaka(BaseModel):
     olay_tarihi: date | None = None
     request: dict[str, Any] = Field(default_factory=dict)
     response: dict[str, Any] = Field(default_factory=dict)
-    source_ids: list[str] = Field(default_factory=list, max_length=MAX_SOURCE_IDS)
+    # Kimlik bicimi sinirli: 404 mesaji istemcinin gonderdigi degeri yansitir.
+    source_ids: list[SourceId] = Field(default_factory=list, max_length=MAX_SOURCE_IDS)
 
     @field_validator("request", "response")
     @classmethod
@@ -113,7 +118,8 @@ class AnalizIstegi(BaseModel):
 
     mod: Literal["A", "B", "C"]
     vaka: Vaka | None = None
-    case_id: str | None = Field(default=None, description="cases.jsonl'daki gelistirme vakasi")
+    case_id: str | None = Field(default=None, max_length=64, pattern=r"^[A-Za-z0-9_-]+$",
+                                description="cases.jsonl'daki gelistirme vakasi")
     uygunluk_motoru: bool = True
     top_k: int = Field(default=retrieval.DEFAULT_TOP_K, ge=1, le=MAX_SOURCE_IDS)
 
@@ -176,6 +182,16 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     retrievers: dict[int, retrieval.Retriever] = {}
 
     app = FastAPI(title="Destekizi", version="1", docs_url="/docs", redoc_url=None)
+    retriever_lock = threading.Lock()
+
+    @app.exception_handler(RequestValidationError)
+    async def _invalid(request: Request, exc: RequestValidationError) -> JSONResponse:
+        # FastAPI'nin varsayilan 422 yaniti hataya yol acan GIRDIYI ("input") aynen
+        # geri yazar; maskelenmemis sir istemciye ve ara katman loglarina gider.
+        # Yalnizca konum, mesaj ve tur dondurulur; durum kodu yine 422'dir.
+        details = [{"loc": list(e.get("loc", ())), "msg": e.get("msg"), "type": e.get("type")}
+                   for e in exc.errors()]
+        return JSONResponse(status_code=422, content={"detail": details})
 
     @app.exception_handler(Exception)
     async def _unexpected(request: Request, exc: Exception) -> JSONResponse:
@@ -188,14 +204,16 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         )
 
     def _retriever(top_k: int) -> retrieval.Retriever:
-        if top_k not in retrievers:
-            try:
-                retrievers[top_k], _ = retrieval.open_retriever(
-                    settings.embeddings_path, settings.docs_path, sources, top_k
-                )
-            except retrieval.RetrievalError as exc:
-                raise _Unavailable(503, f"Arama kullanilamiyor: {exc}") from exc
-        return retrievers[top_k]
+        # Uc noktalar is parcacigi havuzunda calisir; model bir kez yuklensin.
+        with retriever_lock:
+            if top_k not in retrievers:
+                try:
+                    retrievers[top_k], _ = retrieval.open_retriever(
+                        settings.embeddings_path, settings.docs_path, sources, top_k
+                    )
+                except retrieval.RetrievalError as exc:
+                    raise _Unavailable(503, f"Arama kullanilamiyor: {exc}") from exc
+            return retrievers[top_k]
 
     def _analyze(body: AnalizIstegi) -> dict[str, Any]:
         if body.case_id is not None:
@@ -230,11 +248,15 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         )
         if not record["ok"]:
             kind = record["failure_kind"]
+            # Kayit yanita konmaz ama teshis bilgisi kaybolmasin: tur ve hata loglanir
+            # (kayit maskelenmis vakadan uretildi).
+            LOG.warning("model basarisiz: vaka=%s tur=%s hata=%s",
+                        record["case_id"], kind, str(record.get("error"))[:500])
             if kind == "timeout":
                 raise _Unavailable(504, f"Model {settings.model_timeout_s} s icinde yanit vermedi.")
             if kind == "connection_error":
                 raise _Unavailable(503, "Yerel modele (Ollama) baglanilamadi.")
-            # Kesik/bos yanit: basari gibi sunulmaz; kayit incelensin diye 502 ile doner.
+            # Kesik/bos yanit, Ollama HTTP hatasi, bozuk JSON: basari gibi sunulmaz.
             raise _Unavailable(502, f"Model gecerli bir yanit uretmedi: {kind}.")
         return record
 
@@ -296,7 +318,12 @@ def _check_ollama(settings: Settings) -> dict[str, Any]:
         tags = run._http_json(f"{host}/api/tags", timeout=HEALTH_TIMEOUT_S)
     except Exception as exc:  # noqa: BLE001 - yoklama; ayrinti yalnizca tur olarak dondurulur
         return {"durum": "erisilemez", "mesaj": f"{host} ({type(exc).__name__})", "gerekli_mod": "C"}
-    names = {m.get("model") for m in tags.get("models") or []} | {m.get("name") for m in tags.get("models") or []}
+    models = tags.get("models") if isinstance(tags, dict) else None
+    if not isinstance(models, list) or not isinstance(version, dict):
+        return {"durum": "gecersiz_yanit", "mesaj": f"{host} beklenmeyen bicimde yanit verdi",
+                "gerekli_mod": "C"}
+    names = {m.get("model") for m in models if isinstance(m, dict)} | {
+        m.get("name") for m in models if isinstance(m, dict)}
     if settings.model not in names:
         return {"durum": "model_yok", "model": settings.model, "surum": version.get("version"),
                 "gerekli_mod": "C"}
@@ -310,5 +337,10 @@ def _check_retrieval(settings: Settings, sources: dict[str, Any]) -> dict[str, A
         retrieval.load_cache(settings.embeddings_path, settings.docs_path, sources)
     except retrieval.RetrievalError as exc:
         return {"durum": "onbellek_gecersiz", "mesaj": str(exc), "gerekli_mod": "B"}
-    # Model burada yuklenmez (saniyeler surer); ilk B isteginde yuklenir.
-    return {"durum": "ok"}
+    # Model burada yuklenmez (saniyeler surer); yalnizca yerel dosyalarinin varligi
+    # yoklanir. Yukleme ilk B isteginde yapilir; orada bozulursa istek 503 alir.
+    revision = retrieval._model_revision(retrieval.EMBEDDING_MODEL)
+    if revision is None:
+        return {"durum": "model_yok", "mesaj": f"Yerel model bulunamadi. {retrieval.BUILD_HINT}",
+                "gerekli_mod": "B"}
+    return {"durum": "ok", "model_revizyonu": revision}

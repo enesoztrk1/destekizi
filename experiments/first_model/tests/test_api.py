@@ -73,7 +73,8 @@ class HealthTest(ApiTestBase):
         self.assertEqual(body["bilesenler"]["kaynak_verisi"]["kaynak_sayisi"], 8)
         self.assertIn(("GET", "/api/version"), probed)
         self.assertIn(("GET", "/api/tags"), probed)
-        self.assertIn(body["bilesenler"]["arama"]["durum"], ("ok", "paket_yok", "onbellek_gecersiz"))
+        self.assertIn(body["bilesenler"]["arama"]["durum"],
+                      ("ok", "paket_yok", "onbellek_gecersiz", "model_yok"))
 
     def test_health_reports_unreachable_ollama_as_partial(self) -> None:
         body = self.client(_dead_host()).get("/health").json()
@@ -113,6 +114,25 @@ class ValidationTest(ApiTestBase):
             with self.subTest(body=str(body)[:80]):
                 self.assertEqual(client.post("/v1/analyses", json=body).status_code, 422)
 
+    def test_422_does_not_echo_secret_input(self) -> None:
+        # FastAPI'nin varsayilan 422 yaniti girdiyi aynen yansitir; ozel isleyici yansitmaz.
+        client = self.client()
+        big = secret_case()
+        big["request"]["blob"] = "x" * (api.MAX_RECORD_BYTES + 1)
+        bad = [
+            {"mod": "A", "vaka": {**secret_case(), "source_ids": []}},
+            {"mod": "A", "vaka": big},
+            {"mod": "A", "vaka": {**secret_case(), "beklenmeyen": 1}},
+            {"mod": "X", "vaka": secret_case()},
+        ]
+        for body in bad:
+            with self.subTest(body=str(body)[:60]):
+                resp = client.post("/v1/analyses", json=body)
+                self.assertEqual(resp.status_code, 422)
+                for secret in SECRETS:
+                    self.assertNotIn(secret, resp.text)
+                self.assertTrue(all({"loc", "msg", "type"} == set(d) for d in resp.json()["detail"]))
+
     def test_unknown_source_and_case_get_404(self) -> None:
         client = self.client()
         self.assertEqual(client.get("/v1/sources/D99").status_code, 404)
@@ -140,10 +160,18 @@ class ModelErrorTest(ApiTestBase):
         self.assertEqual(resp.status_code, 504)
 
     def test_truncated_answer_is_not_success(self) -> None:
-        with FakeOllama([{"kind": "length"}]) as fake:
+        with FakeOllama([{"kind": "length"}]) as fake, \
+                self.assertLogs("destekizi.api", level="WARNING") as logs:
             resp = self.client(fake.url).post("/v1/analyses", json={"mod": "C", "case_id": "C01"})
         self.assertEqual(resp.status_code, 502)
         self.assertIn("truncated_length", resp.json()["detail"])
+        self.assertIn("truncated_length", "\n".join(logs.output))  # teshis kaybolmaz
+
+    def test_ollama_http_error_is_not_success(self) -> None:
+        with FakeOllama([{"kind": "http_error", "status": 500}]) as fake, \
+                self.assertLogs("destekizi.api", level="WARNING"):
+            resp = self.client(fake.url).post("/v1/analyses", json={"mod": "C", "case_id": "C01"})
+        self.assertEqual(resp.status_code, 502)
 
     def test_unexpected_error_hides_internals(self) -> None:
         client = self.client()

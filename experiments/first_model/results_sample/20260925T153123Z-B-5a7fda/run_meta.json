@@ -1,0 +1,85 @@
+{
+  "run_id": "20260925T153123Z-B-5a7fda",
+  "mod": "B",
+  "started_at_utc": "2026-09-25T15:31:23+00:00",
+  "model": null,
+  "host": null,
+  "options": null,
+  "auto_retry": 0,
+  "concurrency": 1,
+  "ayar_notlari": [
+    "B modu: anlamsal arama + A modunun kural tabanli sablonu (rules_mode.py).",
+    "Kaynaklar elle atanmaz; retrieval.py ile en yakin top-k kaynak bulunur.",
+    "Sira: arama -> uygunluk filtresi -> kural motoru.",
+    "Ollama'ya istek gonderilmez; on kontrol, isinma ve model cagrisi atlanir.",
+    "Model olcumleri (token, sunucu sureleri) null'dir; client_elapsed_s kural suresidir.",
+    "Kurallar yalnizca docs.json kaynak metinlerinden turetilmistir."
+  ],
+  "girdi_dosyalari": {
+    "prompt.txt": {
+      "path": "C:\\Users\\<USER>\\Desktop\\DestekIzi\\experiments\\first_model\\prompt.txt",
+      "sha256": "f161fa4a0a47079e9188f8851f9a71872e5b4f0362fb31543216f0f61e67c6f3"
+    },
+    "docs.json": {
+      "path": "C:\\Users\\<USER>\\Desktop\\DestekIzi\\experiments\\first_model\\docs.json",
+      "sha256": "dff23ccfb8cb90508ede31950dcb99b782f8d9ebc27cdf4e003df71a468ce954"
+    },
+    "cases.jsonl": {
+      "path": "C:\\Users\\<USER>\\Desktop\\DestekIzi\\experiments\\first_model\\cases.jsonl",
+      "sha256": "b119d205aa111f8a34b64525ebe701f8107b6d34d6b784145988dd446847bef5"
+    }
+  },
+  "calistirici_dosyasi": {
+    "path": "C:\\Users\\<USER>\\Desktop\\DestekIzi\\experiments\\first_model\\run.py",
+    "sha256": "7cbe9d53dc16e8371bbda2e2689e1734d1f2a5ee9fd81b26654d860e69102cda",
+    "not": "Calisma basinda diskteki run.py dosyasinin ozeti."
+  },
+  "kural_motoru_dosyasi": {
+    "path": "C:\\Users\\<USER>\\Desktop\\DestekIzi\\experiments\\first_model\\rules_mode.py",
+    "sha256": "bc16c3ba467cde26b9f047826f98a8ea1c9cc29870ec05b02dc08b948e3af450",
+    "not": "Calisma basinda diskteki rules_mode.py dosyasinin ozeti."
+  },
+  "uygunluk_motoru": {
+    "acik": true,
+    "path": "C:\\Users\\<USER>\\Desktop\\DestekIzi\\experiments\\first_model\\applicability.py",
+    "sha256": "80440f1d2f147cf25caeb55381e49fce970e226002ba634f4974615e4de3e1ec",
+    "not": "Calisma basinda diskteki applicability.py dosyasinin ozeti. acik=false: --no-applicability ile kapatildi; kaynaklar filtrelenmedi."
+  },
+  "kaynak_secimi": "arama",
+  "arama": {
+    "retrieval_py_sha256": "3cc8dcd3cc22d9b34ed539301d41c924a080bf42073ad215aa9e2aa4297a44b5",
+    "embedding_modeli": "intfloat/multilingual-e5-small",
+    "cihaz": "cpu",
+    "top_k": 3,
+    "sorgu_alanlari": [
+      "ticket",
+      "response.http_status",
+      "response.error_code"
+    ],
+    "onekler": {
+      "kaynak": "passage: ",
+      "sorgu": "query: "
+    },
+    "benzerlik": "kosinus (normalize vektorlerde ic carpim), kesin arama, indeks yok",
+    "model_yukleme_suresi_s": 12.331283,
+    "revizyon_kontrolu": "eslesti",
+    "onbellek": {
+      "path": "C:\\Users\\<USER>\\Desktop\\DestekIzi\\experiments\\first_model\\embeddings.json",
+      "sha256": "98cb08089623ea8839c982c96f5380c55aad15022a29bee972477d588686c2a6",
+      "schema_version": 1,
+      "model": "intfloat/multilingual-e5-small",
+      "model_revizyonu": "614241f622f53c4eeff9890bdc4f31cfecc418b3",
+      "sentence_transformers_surumu": "6.1.0",
+      "cihaz": "cpu",
+      "boyut": 384,
+      "normalize": true,
+      "passage_oneki": "passage: ",
+      "docs_sha256": "dff23ccfb8cb90508ede31950dcb99b782f8d9ebc27cdf4e003df71a468ce954",
+      "uretildigi_an_utc": "2026-09-25T13:44:10+00:00"
+    }
+  },
+  "cevap_anahtari": "expected.jsonl uretim yolunda okunmaz; ozeti bilerek alinmaz.",
+  "python_version": "3.12.7 (tags/v3.12.7:0b05ead, Oct  1 2024, 03:06:41) [MSC v.1941 64 bit (AMD64)]",
+  "python_implementation": "CPython",
+  "platform": "Windows-11-10.0.26200-SP0"
+}

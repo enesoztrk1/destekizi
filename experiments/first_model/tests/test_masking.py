@@ -87,6 +87,22 @@ class HeaderTest(unittest.TestCase):
         for value in ("", None, True):
             self.assertEqual(masking.mask_header_value("Authorization", value), value)
 
+    def test_non_string_header_values_are_masked(self) -> None:
+        data = {"Authorization": ["Bearer abcdefghijk"], "X-Api-Key": 123456789,
+                "Cookie": {"session": "s3cr3t"}}
+        masked, changed = masking.mask_case(data)
+        self.assertEqual(masked, {"Authorization": ["Bearer ***"], "X-Api-Key": M,
+                                  "Cookie": {"session": M}})
+        self.assertEqual(changed, ["Authorization", "X-Api-Key", "Cookie"])
+
+    def test_name_variants_with_dash_underscore_case(self) -> None:
+        data = {"X_API_KEY": "a", "api-key": "b", "accessToken": "c", "Refresh-Token": "d",
+                "authorization_present": True, "request_id": "r1"}
+        masked, _ = masking.mask_case(data)
+        self.assertEqual(masked, {"X_API_KEY": M, "api-key": M, "accessToken": M,
+                                  "Refresh-Token": M, "authorization_present": True,
+                                  "request_id": "r1"})
+
     def test_non_sensitive_headers_unchanged(self) -> None:
         headers = {"Retry-After": "12", "Content-Type": "application/json",
                    "X-Demo-Retry-Ms": "20000", "X-Request-Id": "abc-123"}
@@ -147,10 +163,21 @@ class TextPatternTest(unittest.TestCase):
             with self.subTest(text=text):
                 self.assertEqual(masking.mask_text(text)[0], want)
 
+    def test_key_value_embedded_in_text(self) -> None:
+        samples = {
+            'govde {"access_token":"opaque123","page":2}': 'govde {"access_token":"***","page":2}',
+            "GET /orders?api_key=SEKRET1&token=T0K&page=2": "GET /orders?api_key=***&token=***&page=2",
+            "password = hunter22 tamam": "password = *** tamam",
+        }
+        for text, want in samples.items():
+            with self.subTest(text=text):
+                self.assertEqual(masking.mask_text(text)[0], want)
+
     def test_diagnostic_text_untouched(self) -> None:
         for text in ("2026-05-20", "X-Demo-Retry-Ms: 20000", "DEMO_TOKEN_EXPIRED 401",
                      "Bearer şemasıyla gönderin", "Bearer ***", "limit=100, page_size=100",
-                     "sipariş 5000000"):
+                     "sipariş 5000000", "Tokenım var", "token süresi doldu mu",
+                     "DEMO_TOKEN_EXPIRED"):
             with self.subTest(text=text):
                 self.assertEqual(masking.mask_text(text), (text, []))
 

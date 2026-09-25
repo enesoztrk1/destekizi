@@ -270,6 +270,10 @@ atlanır. İkinci iş yalnızca `requirements-api.txt` kurar ve API testlerini
 1. madde kısmen yapıldı; 6. ve 7. maddeler yapılmadı. Tam liste: [`docs/PROJECT.md`](docs/PROJECT.md)
 → "Geleceğe bırakılan işler".
 
+## Katkı
+
+Katkı kuralları: [`CONTRIBUTING.md`](CONTRIBUTING.md).
+
 ## Lisans
 
 [MIT](LICENSE) © 2026 Enes Öztürk

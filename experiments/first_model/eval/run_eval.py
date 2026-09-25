@@ -27,11 +27,32 @@ from typing import Any
 HERE = Path(__file__).resolve().parent
 DEFAULT_EXPECTED = HERE.parent / "expected.jsonl"
 
+# Uygunluk durum ve gerekce kodlarinin tek kaynagi applicability.py'dir. Yalnizca
+# sabitler okunur; beklenen degerler motorla HESAPLANMAZ.
+if str(HERE.parent) not in sys.path:
+    sys.path.insert(0, str(HERE.parent))
+import applicability  # noqa: E402
+
 STATUSES = ("taslak_hazir", "bilgi_gerekli", "uzman_incelemesi")
 UNDETERMINED = "belirlenemedi"
 MULTIPLE_FAMILIES = "coklu"
 
-SOURCE_FAMILY = {"D1": "yetkilendirme", "D2": "istek_siniri", "D3": "sayfalama"}
+SOURCE_FAMILY = {
+    "D1": "yetkilendirme", "D2": "istek_siniri", "D3": "sayfalama",
+    "D4": "yetkilendirme", "D5": "yetkilendirme",
+    "D6": "istek_siniri", "D7": "istek_siniri", "D8": "sayfalama",
+}
+SOURCE_ID_RE = re.compile(r"\b(" + "|".join(SOURCE_FAMILY) + r")\b")
+
+# Belirsizlik gosterimi sezgiseli: beklenen BELIRSIZ kaynagin gerekce koduna gore
+# "Belirsizlik / eksik bilgi" bolumunde aranan isaret. A modunun belirsizlik
+# satirlari ayni kisi tarafindan yazildi; bu metrik de A lehine yanli olabilir.
+UNCERTAINTY_MARKERS = {
+    applicability.TARIH_BILINMIYOR: "olay tarihi",
+    applicability.KAYNAK_TARIHI_YOK: "yürürlük",
+    applicability.SURUM_BILINMIYOR: "sürüm",
+    applicability.KAYNAK_SURUMU_YOK: "sürüm",
+}
 
 # Durum sezgiseli: YALNIZCA "Sonraki adim" bolumune bakilir, sirayla:
 #   "uzman" geciyorsa -> uzman_incelemesi
@@ -43,10 +64,12 @@ EXPERT_MARKERS = ("uzman",)
 INFO_REQUEST_MARKERS = ("paylaş", "belirtin", "iletin")
 
 HEADINGS = {
-    "bulgular": re.compile(r"^\W*bulgular\W*:?", re.I),
+    # Baslik sozcugunden sonra \b sart: "- Kaynakların ..." gibi bir madde yeni bolum
+    # baslatmasin (Turkce ek almis sozcuk baslik degildir).
+    "bulgular": re.compile(r"^\W*bulgular\b\W*:?", re.I),
     "belirsizlik": re.compile(r"^\W*belirsizlik\b[^:\n]*:?", re.I),
-    "sonraki_adim": re.compile(r"^\W*sonraki\s+ad[ıi]m\W*:?", re.I),
-    "kaynaklar": re.compile(r"^\W*kaynaklar\W*:?", re.I),
+    "sonraki_adim": re.compile(r"^\W*sonraki\s+ad[ıi]m\b\W*:?", re.I),
+    "kaynaklar": re.compile(r"^\W*kaynaklar\b\W*:?", re.I),
 }
 
 LIMITATION = (
@@ -54,6 +77,12 @@ LIMITATION = (
     "doğruluğunu, kaynak desteğinin gerçekliğini ve belirsizlik yönetimini "
     "**ölçmezler**. Bunlar `review_template.md` ile insan tarafından puanlanır ve bu "
     "puanlama **henüz yapılmamıştır**."
+)
+APPLICABILITY_LIMITATION = (
+    "> **Uygunluk metriklerinin sınırı:** Uygunluk metrikleri kaynak uygunluk "
+    "kararının (sürüm ve yürürlük) doğruluğunu ölçer; açıklamanın teknik doğruluğunu "
+    "ve kaynak desteğinin gerçekliğini **ölçmez**. Bunlar `review_template.md` ile "
+    "insan tarafından puanlanır ve bu puanlama **henüz yapılmamıştır**."
 )
 
 
@@ -64,7 +93,8 @@ LIMITATION = (
 
 FAMILIES = ("yetkilendirme", "istek_siniri", "sayfalama")
 LIST_KEYS = ("gerekli_kaynaklar", "yasak_kaynaklar", "yasak_ifadeler", "gerekli_ifadeler")
-CHECK_KEYS = ("beklenen_durum", "beklenen_aile") + LIST_KEYS
+MAP_KEYS = ("beklenen_uygunluk", "beklenen_gerekce")
+CHECK_KEYS = ("beklenen_durum", "beklenen_aile") + LIST_KEYS + MAP_KEYS
 
 
 def _read_jsonl(path: Path) -> list[dict[str, Any]]:
@@ -96,6 +126,21 @@ def _validate_checks(case_id: str, block: dict[str, Any]) -> None:
         value = block.get(key, [])
         if not isinstance(value, list) or not all(isinstance(v, str) for v in value):
             raise ValueError(f"{case_id}: {key} metin listesi olmali")
+    for key in MAP_KEYS:
+        value = block.get(key, {})
+        if not isinstance(value, dict) or not all(isinstance(k, str) for k in value):
+            raise ValueError(f"{case_id}: {key} kaynak kimligi -> deger nesnesi olmali")
+    states = block.get("beklenen_uygunluk", {})
+    for sid, state in states.items():
+        if state not in applicability.DURUMLAR:
+            raise ValueError(f"{case_id}: gecersiz beklenen_uygunluk {sid}: {state!r}")
+    for sid, code in block.get("beklenen_gerekce", {}).items():
+        if code not in applicability.GEREKCE_DURUMU:
+            raise ValueError(f"{case_id}: gecersiz beklenen_gerekce {sid}: {code!r}")
+        if sid in states and applicability.GEREKCE_DURUMU[code] != states[sid]:
+            raise ValueError(
+                f"{case_id}: {sid} gerekcesi {code!r}, {states[sid]} durumuyla celisiyor"
+            )
 
 
 def load_expected(path: Path) -> dict[str, dict[str, Any] | None]:
@@ -133,11 +178,14 @@ def load_run(run_dir: Path) -> dict[str, Any]:
     mode_note = None
     if mode is None:
         mode, mode_note = "C", "kayıtta mod alanı yok; C varsayıldı"
+    motor_meta = meta.get("uygunluk_motoru")
+    motor = motor_meta.get("acik") if isinstance(motor_meta, dict) else None
     return {
         "run_id": meta.get("run_id") or run_dir.name,
         "mode": mode,
         "mode_note": mode_note,
         "run_state": run_state,
+        "motor": motor,  # True / False / None (motordan onceki kosu)
         "records": {r["case_id"]: r for r in records},
     }
 
@@ -167,10 +215,10 @@ def parse_sections(content: str) -> dict[str, str]:
 
 
 def cited_sources(sections: dict[str, str]) -> list[str] | None:
-    """Yalnizca 'Kaynaklar' bolumundeki D1-D3 kimlikleri. Bolum yoksa None."""
+    """Yalnizca 'Kaynaklar' bolumundeki bilinen kaynak kimlikleri. Bolum yoksa None."""
     if "kaynaklar" not in sections:
         return None
-    return sorted(set(re.findall(r"\bD[1-3]\b", sections["kaynaklar"])))
+    return sorted(set(SOURCE_ID_RE.findall(sections["kaynaklar"])))
 
 
 def derive_status(sections: dict[str, str]) -> str:
@@ -226,6 +274,11 @@ def evaluate_case(record: dict[str, Any] | None, checks: dict[str, Any] | None) 
         "yasak_kaynak_ihlali": None,
         "yasak_ifadeler_bulunan": None,
         "gerekli_ifadeler_eksik": None,
+        "uygunluk_dogru": None,
+        "gerekce_dogru": None,
+        "uygunluk_hatalari": None,
+        "yururluk_disi_kaynak": None,
+        "belirsizlik_gosterildi": None,
     }
     if "beklenen_durum" in checks:
         result["durum_dogru"] = status == checks["beklenen_durum"]
@@ -245,7 +298,54 @@ def evaluate_case(record: dict[str, Any] | None, checks: dict[str, Any] | None) 
     phrases = checks.get("gerekli_ifadeler") or []
     if phrases:
         result["gerekli_ifadeler_eksik"] = [p for p in phrases if fold(p) not in folded]
+    _evaluate_applicability(result, record, checks, sections, cited, has_answer)
     return result
+
+
+def _evaluate_applicability(
+    result: dict[str, Any],
+    record: dict[str, Any] | None,
+    checks: dict[str, Any],
+    sections: dict[str, str],
+    cited: list[str] | None,
+    has_answer: bool,
+) -> None:
+    """Uygunluk metrikleri. None = olculmedi (beklenti yok, motor kapali veya cevap yok)."""
+    states = checks.get("beklenen_uygunluk") or {}
+    reasons = checks.get("beklenen_gerekce") or {}
+    decided = (record or {}).get("degerlendirilen_kaynaklar")
+    if isinstance(decided, dict):
+        errors = []
+        if states:
+            hits = 0
+            for sid, want in states.items():
+                got = (decided.get(sid) or {}).get("durum")
+                hits += got == want
+                if got != want:
+                    errors.append(f"{sid}: {got or 'yok'} (beklenen {want})")
+            result["uygunluk_dogru"] = (hits, len(states))
+        if reasons:
+            hits = 0
+            for sid, want in reasons.items():
+                got = (decided.get(sid) or {}).get("gerekce")
+                hits += got == want
+                if got != want:
+                    errors.append(f"{sid}: {got or 'yok'} (beklenen {want})")
+            result["gerekce_dogru"] = (hits, len(reasons))
+        result["uygunluk_hatalari"] = errors
+    # Kararin dogrulugundan bagimsiz olarak yanitin kendisine bakilir: yanit,
+    # cevap anahtarina gore olay tarihinde/surumde gecersiz bir kaynaga dayaniyor mu?
+    invalid = sorted(sid for sid, st in states.items() if st == applicability.UYGUN_DEGIL)
+    if invalid and cited is not None:
+        result["yururluk_disi_kaynak"] = [sid for sid in cited if sid in invalid]
+    wanted_markers = sorted({
+        UNCERTAINTY_MARKERS[reasons[sid]]
+        for sid, st in states.items()
+        if st == applicability.BELIRSIZ and reasons.get(sid) in UNCERTAINTY_MARKERS
+    })
+    if wanted_markers and has_answer:
+        text = fold(sections.get("belirsizlik", ""))
+        result["belirsizlik_gosterildi"] = all(fold(m) in text for m in wanted_markers)
 
 
 def _range(values: list[float]) -> dict[str, float] | None:
@@ -278,6 +378,10 @@ def evaluate_run(run: dict[str, Any], expected: dict[str, dict | None]) -> dict[
         row = confusion.setdefault(wanted, {})
         row[case["durum"]] = row.get(case["durum"], 0) + 1
 
+    def pair_sum(key: str) -> tuple[int, int]:
+        pairs = metric_values(key)
+        return (sum(h for h, _ in pairs), sum(t for _, t in pairs))
+
     def metric_list(key: str) -> list[float]:
         return [
             r["metrics"][key] for r in ok_records
@@ -301,6 +405,13 @@ def evaluate_run(run: dict[str, Any], expected: dict[str, dict | None]) -> dict[
                         len(metric_values("yasak_ifadeler_bulunan"))),
         "gerekli_ifade": (sum(1 for v in metric_values("gerekli_ifadeler_eksik") if v),
                           len(metric_values("gerekli_ifadeler_eksik"))),
+        "uygunluk": pair_sum("uygunluk_dogru"),
+        "gerekce": pair_sum("gerekce_dogru"),
+        "yururluk_disi": (sum(1 for v in metric_values("yururluk_disi_kaynak") if v),
+                          len(metric_values("yururluk_disi_kaynak"))),
+        "yururluk_disi_atif": sum(len(v) for v in metric_values("yururluk_disi_kaynak")),
+        "belirsizlik_gosterim": (sum(metric_values("belirsizlik_gosterildi")),
+                                 len(metric_values("belirsizlik_gosterildi"))),
         "karisiklik": confusion,
         "istemci_sure_s": _range([r["client_elapsed_s"] for r in ok_records
                                   if isinstance(r.get("client_elapsed_s"), (int, float))]),
@@ -347,10 +458,31 @@ def _range_text(stats: dict[str, float] | None) -> str:
 
 
 def assign_labels(evaluations: list[dict[str, Any]]) -> None:
-    """Etiket mod adidir; iki kosu ayni moddaysa sira numarasi eklenir."""
+    """Etiket mod adidir. Iki kosu ayni moddaysa ve uygunluk motoru biri acik biri
+    kapaliysa etikete bu eklenir (ablation); aksi halde sira numarasi eklenir."""
     modes = [ev["run"]["mode"] for ev in evaluations]
+    motors = [ev["run"].get("motor") for ev in evaluations]
+    ablation = len(evaluations) == 2 and modes[0] == modes[1] and set(motors) == {True, False}
     for index, ev in enumerate(evaluations, start=1):
-        ev["label"] = f"{ev['run']['mode']}{index}" if modes.count(ev["run"]["mode"]) > 1 else ev["run"]["mode"]
+        mode = ev["run"]["mode"]
+        if ablation:
+            ev["label"] = f"{mode}-{'açık' if ev['run']['motor'] else 'kapalı'}"
+        elif modes.count(mode) > 1:
+            ev["label"] = f"{mode}{index}"
+        else:
+            ev["label"] = mode
+
+
+def _motor_text(motor: bool | None) -> str:
+    return {True: "açık", False: "kapalı"}.get(motor, "kayıtta yok (motordan önceki koşu)")
+
+
+def _measured(pair: tuple[int, int], ev: dict[str, Any]) -> str:
+    if pair[1]:
+        return _of(pair[1], pair[0])
+    if ev["run"].get("motor") is not True:
+        return "ölçülmedi (motor kapalı veya kayıtta yok)"
+    return "kontrol yok"
 
 
 def _label(ev: dict[str, Any]) -> str:
@@ -369,6 +501,11 @@ METRIC_ROWS = (
     ("Yasak kaynak listelenmiş", lambda ev: _frac(ev["yasak_kaynak"])),
     ("Yasak ifade bulunan vaka", lambda ev: _frac(ev["yasak_ifade"])),
     ("Gerekli ifadesi eksik vaka", lambda ev: _frac(ev["gerekli_ifade"])),
+    ("Uygunluk kararı doğru (kaynak bazında)", lambda ev: _measured(ev["uygunluk"], ev)),
+    ("Gerekçe kodu doğru (kaynak bazında)", lambda ev: _measured(ev["gerekce"], ev)),
+    ("Yürürlükte/sürümde olmayan kaynağa dayanan vaka",
+     lambda ev: _frac(ev["yururluk_disi"]) + f" (toplam atıf: {ev['yururluk_disi_atif']})"),
+    ("Belirsizliği çıktıda gösteren vaka", lambda ev: _frac(ev["belirsizlik_gosterim"])),
     ("İstemci süresi (s)", lambda ev: _range_text(ev["istemci_sure_s"])),
     ("Sunucu total_duration (s)", lambda ev: _range_text(ev["sunucu_sure_s"])),
     ("Çıktı token (eval_count)", lambda ev: _range_text(ev["eval_count"])),
@@ -381,6 +518,8 @@ PAIRED = (
     ("Gerekli kaynaklar", "gerekli_kaynak_tamam", False),
     ("Yasak ifade yok", "yasak_ifadeler_bulunan", True),
     ("Gerekli ifadeler tam", "gerekli_ifadeler_eksik", True),
+    ("Yürürlük/sürüm dışı kaynağa dayanmıyor", "yururluk_disi_kaynak", True),
+    ("Belirsizlik gösterildi", "belirsizlik_gosterildi", False),
 )
 
 
@@ -403,13 +542,16 @@ def _cell(value: Any) -> str:
 
 def render_report(evaluations: list[dict[str, Any]], expected: dict[str, dict | None]) -> str:
     assign_labels(evaluations)
-    out: list[str] = ["# Destekİzi — makine kontrolleri raporu", "", LIMITATION, ""]
+    out: list[str] = ["# Destekİzi — makine kontrolleri raporu", "", LIMITATION, "",
+                      APPLICABILITY_LIMITATION, ""]
 
     out += ["## Değerlendirilen koşular", "",
-            "| Etiket | run_id | Mod | Çalışma durumu | Not |", "| --- | --- | --- | --- | --- |"]
+            "| Etiket | run_id | Mod | Uygunluk motoru | Çalışma durumu | Not |",
+            "| --- | --- | --- | --- | --- | --- |"]
     for ev in evaluations:
         run = ev["run"]
-        out.append(f"| {_label(ev)} | `{run['run_id']}` | {run['mode']} | {run['run_state']} "
+        out.append(f"| {_label(ev)} | `{run['run_id']}` | {run['mode']} "
+                   f"| {_motor_text(run.get('motor'))} | {run['run_state']} "
                    f"| {run['mode_note'] or ''} |")
     missing = sorted(cid for cid, block in expected.items() if block is None)
     out += ["", f"makine_kontrolleri alanı olmayan vakalar: {', '.join(missing) if missing else 'yok'}.", ""]
@@ -458,7 +600,8 @@ def render_report(evaluations: list[dict[str, Any]], expected: dict[str, dict | 
     for ev in evaluations:
         lab = _label(ev)
         header += [f"{lab} durum", f"{lab} aile", f"{lab} kaynaklar",
-                   f"{lab} yasak ifade", f"{lab} eksik ifade"]
+                   f"{lab} yasak ifade", f"{lab} eksik ifade",
+                   f"{lab} yürürlük dışı atıf", f"{lab} belirsizlik gösterildi"]
     out.append("| " + " | ".join(header) + " |")
     out.append("| " + " | ".join("---" for _ in header) + " |")
     for cid in sorted(set().union(*(ev["per_case"] for ev in evaluations))):
@@ -467,7 +610,7 @@ def render_report(evaluations: list[dict[str, Any]], expected: dict[str, dict | 
         for ev in evaluations:
             case = ev["per_case"].get(cid)
             if case is None:
-                row += ["—"] * 5
+                row += ["—"] * 7
                 continue
             mark = lambda ok, v: f"{v} ({'✓' if ok else '✗'})" if ok is not None else str(v)
             row += [
@@ -476,9 +619,27 @@ def render_report(evaluations: list[dict[str, Any]], expected: dict[str, dict | 
                 _cell(case["kaynaklar"]) if case["kaynaklar"] is not None else "bölüm yok",
                 _cell(case["yasak_ifadeler_bulunan"]),
                 _cell(case["gerekli_ifadeler_eksik"]),
+                _cell(case["yururluk_disi_kaynak"]),
+                _cell(case["belirsizlik_gosterildi"]),
             ]
         out.append("| " + " | ".join(row) + " |")
     out.append("")
+
+    out += ["## Uygunluk kararları", "",
+            "Beklenen: `expected.jsonl → beklenen_uygunluk / beklenen_gerekce`. Kayıt: "
+            "vaka kaydındaki `degerlendirilen_kaynaklar`. Motor kapalı koşuda karar yoktur.", ""]
+    for ev in evaluations:
+        if ev["run"].get("motor") is not True:
+            out += [f"- {_label(ev)}: ölçülmedi (uygunluk motoru {_motor_text(ev['run'].get('motor'))}).", ""]
+            continue
+        wrong = {cid: c["uygunluk_hatalari"] for cid, c in ev["per_case"].items()
+                 if c["uygunluk_hatalari"]}
+        if not wrong:
+            out += [f"- {_label(ev)}: beklenen her karar ve gerekçe kayıtla aynı.", ""]
+            continue
+        out.append(f"- {_label(ev)}: beklenenden farklı kararlar:")
+        out += [f"  - {cid}: {'; '.join(errs)}" for cid, errs in sorted(wrong.items())]
+        out.append("")
 
     out += [
         "## Yöntem ve yaklaşıklıklar",
@@ -497,8 +658,20 @@ def render_report(evaluations: list[dict[str, Any]], expected: dict[str, dict | 
         "- **Yanlılık uyarısı:** A modunun metinleri, durum işaret listesi ve "
         "`makine_kontrolleri` aynı kişi tarafından yazıldı. A metinleri bu işaretleri "
         "kullandığı için karşılaştırma A lehine yanlı olabilir.",
-        "- **Örneklem:** 10 vaka ve her mod için tek koşu var; C modu deterministik değildir "
+        "- **Uygunluk kararı ve gerekçe:** Vaka kaydındaki `degerlendirilen_kaynaklar` ile "
+        "cevap anahtarındaki beklenen değerler kaynak bazında karşılaştırılır. Motor kapalı "
+        "koşuda kayıt yoktur; metrik ölçülmez.",
+        "- **Yürürlük/sürüm dışı kaynak:** Yanıtın `Kaynaklar` bölümünde, cevap anahtarında "
+        "`UYGUN_DEGIL` olan bir kaynağın bulunmasıdır. Yalnızca atıfa bakar; metnin o "
+        "kaynağın kuralını uygulayıp uygulamadığını ölçmez.",
+        "- **Belirsizlik gösterimi:** Beklenen `BELIRSIZ` kaynağın gerekçe koduna göre "
+        "`Belirsizlik / eksik bilgi` bölümünde bir işaret aranır: "
+        + ", ".join(f"{code} → {marker!r}" for code, marker in UNCERTAINTY_MARKERS.items())
+        + ". A modunun belirsizlik satırları ve bu işaretler aynı kişi tarafından yazıldı.",
+        f"- **Örneklem:** {len(expected)} vaka ve her koşu tek; C modu deterministik değildir "
         "(`temperature` 0.7).",
+        "",
+        APPLICABILITY_LIMITATION,
         "",
         LIMITATION,
         "",

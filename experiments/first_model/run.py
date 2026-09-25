@@ -63,6 +63,23 @@ RULES_PATH = Path(rules_mode.__file__).resolve()
 APPLICABILITY_PATH = Path(applicability.__file__).resolve()
 MASKING_PATH = Path(masking.__file__).resolve()
 
+# Uretim yoluna giren tum moduller; run_meta.json "kaynak_dosyalari" alaninda
+# dosya adi -> SHA-256 olarak muhurlenir. Uretim yoluna yeni bir modul eklenirse
+# BURAYA da eklenmelidir; aksi halde kosu kaydi o modulun kodunu muhurlemez.
+# retrieval.py yalnizca aramali kosularda calisir; kaydin her kosuda ayni bicimde
+# olmasi icin yine de her kosuda kaydedilir.
+SOURCE_MODULES = (
+    "run.py",
+    "pipeline.py",
+    "model_client.py",
+    "prompting.py",
+    "inputs.py",
+    "masking.py",
+    "applicability.py",
+    "rules_mode.py",
+    "retrieval.py",
+)
+
 SETTINGS_NOTES = [
     "num_predict ilk kontrolde 256 idi; dort baslikli cevap icin 384'e cikarildi.",
     "think alani, /no_think ve ozel model sablonu kullanilmaz (bkz. docs/PROJECT.md).",
@@ -295,11 +312,8 @@ def run_experiment(args: argparse.Namespace) -> int:
         "docs.json": {"path": str(docs_path), "sha256": sha256_file(docs_path)},
         "cases.jsonl": {"path": str(cases_path), "sha256": sha256_file(cases_path)},
     }
-    runner_file = {
-        "path": str(RUNNER_PATH),
-        "sha256": sha256_file(RUNNER_PATH),
-        "not": "Calisma basinda diskteki run.py dosyasinin ozeti.",
-    }
+    # Calisma basinda diskteki uretim yolu modullerinin ozeti (bkz. SOURCE_MODULES).
+    source_files = {name: sha256_file(HERE / name) for name in SOURCE_MODULES}
     applicability_on = not args.no_applicability
     applicability_meta = {
         "acik": applicability_on,
@@ -333,7 +347,7 @@ def run_experiment(args: argparse.Namespace) -> int:
             "concurrency": 1,
             "ayar_notlari": B_MODE_NOTES if mode == "B" else A_MODE_NOTES,
             "girdi_dosyalari": input_files,
-            "calistirici_dosyasi": runner_file,
+            "kaynak_dosyalari": source_files,
             "kural_motoru_dosyasi": {
                 "path": str(RULES_PATH),
                 "sha256": sha256_file(RULES_PATH),
@@ -360,7 +374,7 @@ def run_experiment(args: argparse.Namespace) -> int:
             "concurrency": 1,
             "ayar_notlari": SETTINGS_NOTES,
             "girdi_dosyalari": input_files,
-            "calistirici_dosyasi": runner_file,
+            "kaynak_dosyalari": source_files,
             "uygunluk_motoru": applicability_meta,
             **source_selection,
             "cevap_anahtari": "expected.jsonl uretim yolunda okunmaz; ozeti bilerek alinmaz.",

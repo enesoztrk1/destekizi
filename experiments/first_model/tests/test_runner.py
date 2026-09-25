@@ -835,7 +835,7 @@ class TimestampAndMetadataTest(unittest.TestCase):
         self.assertEqual(records[0]["started_at_utc"], "clock-2")
         self.assertEqual(records[1]["started_at_utc"], "clock-4")
 
-    def test_run_meta_records_runner_hash_and_renamed_version_timing(self) -> None:
+    def test_run_meta_seals_source_modules_and_renamed_version_timing(self) -> None:
         workspace = make_workspace(real_case_lines(["C01"]))
         self.addCleanup(shutil.rmtree, workspace, True)
 
@@ -844,14 +844,56 @@ class TimestampAndMetadataTest(unittest.TestCase):
         self.assertEqual(code, 0)
 
         meta = json.loads((latest_run_dir(workspace) / "run_meta.json").read_text(encoding="utf-8"))
-        runner_file = Path(run.__file__).resolve()
-        self.assertEqual(meta["calistirici_dosyasi"]["path"], str(runner_file))
-        self.assertEqual(
-            meta["calistirici_dosyasi"]["sha256"],
-            hashlib.sha256(runner_file.read_bytes()).hexdigest(),
-        )
+        assert_sources_sealed(self, meta)
         self.assertIsInstance(meta["api_version_istek_suresi_s"], float)
         self.assertNotIn("baglanti_ek_yuku_s", meta)
+
+
+
+def assert_sources_sealed(test: unittest.TestCase, meta: dict) -> None:
+    """kaynak_dosyalari: listedeki her modul var ve ozeti diskteki dosyayla ayni."""
+    self = test
+    self.assertNotIn("calistirici_dosyasi", meta)  # eski alan yeni kosularda yazilmaz
+    sealed = meta["kaynak_dosyalari"]
+    self.assertEqual(list(sealed), list(run.SOURCE_MODULES))
+    for name, digest in sealed.items():
+        path = EXPERIMENT_DIR / name
+        self.assertTrue(path.is_file(), name)
+        self.assertEqual(digest, hashlib.sha256(path.read_bytes()).hexdigest(), name)
+
+
+class SourceSealTest(unittest.TestCase):
+    """Kosu kaydi sonucu ureten kodun tamamini muhurler."""
+
+    def test_rules_mode_run_meta_seals_every_source_module(self) -> None:
+        results_root = Path(tempfile.mkdtemp(prefix="destekizi_test_"))
+        self.addCleanup(shutil.rmtree, results_root, True)
+        buffer = io.StringIO()
+        with redirect_stdout(buffer), redirect_stderr(buffer):
+            code = run.main(["--mode", "A", "--results-root", str(results_root)])
+        self.assertEqual(code, 0, buffer.getvalue())
+        run_dir = next(results_root.iterdir())
+        meta = json.loads((run_dir / "run_meta.json").read_text(encoding="utf-8"))
+        assert_sources_sealed(self, meta)
+
+    def test_every_local_module_on_the_runner_path_is_listed(self) -> None:
+        # Yeni bir modul run.py'nin ice aktarma zincirine girip SOURCE_MODULES'a
+        # eklenmezse bu test kirilir. Temiz bir surecte (-I) yalnizca run ice aktarilir.
+        probe = (
+            "import sys, pathlib; sys.path.insert(0, sys.argv[1]); import run; "
+            "here = pathlib.Path(sys.argv[1]).resolve(); "
+            "print(' '.join(sorted(pathlib.Path(m.__file__).name for m in list(sys.modules.values()) "
+            "if getattr(m, '__file__', None) and pathlib.Path(m.__file__).resolve().parent == here)))"
+        )
+        done = subprocess.run(
+            [sys.executable, "-I", "-c", probe, str(EXPERIMENT_DIR)],
+            capture_output=True, text=True, timeout=60,
+        )
+        self.assertEqual(done.returncode, 0, done.stderr)
+        loaded = set(done.stdout.split())
+        self.assertIn("run.py", loaded)
+        self.assertEqual(loaded - set(run.SOURCE_MODULES), set(),
+                         "SOURCE_MODULES listesinde olmayan yerel modul")
 
 
 # Yalnizca D4 / D5 metninde gecen ayirt edici ifadeler.

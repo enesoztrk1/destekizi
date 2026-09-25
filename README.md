@@ -21,8 +21,9 @@ Bu depo **Aşama 1 — ilk yerel model deneyini** içerir:
 - Vakalar 401/403, 429 ve sayfalama hatalarını kapsar.
 - C11–C18 ve D4–D8, bir kaynağın vakanın API sürümüne ve olay tarihine uyup
   uymadığını sınar.
-- Kaynaklar her vaka için elle seçilmiştir. Bu yüzden kaynak arama/RAG başarısı
-  **ölçülmez**.
+- A ve C modunda kaynaklar her vaka için elle seçilir. B modu ve
+  `C --retrieval` kaynakları anlamsal aramayla seçer (8 kaynaklı küçük arama
+  uzayı; gerçek RAG başarısı iddia edilmez).
 
 Ayrıntılı kapsam: [`docs/PROJECT.md`](docs/PROJECT.md).
 Deney şartnamesi: [`docs/EXPERIMENT_SPEC.md`](docs/EXPERIMENT_SPEC.md).
@@ -41,7 +42,7 @@ Aşağıdaki tablo tek C koşusuna dayanır: `20260923T214519Z-661fd9`.
 | Sunucu `total_duration` (medyan, min–maks) | 3,177 s (2,924–4,686 s) |
 | Çıktı token sayısı (`eval_count`) | 170–255 (sınır 384) |
 | Girdi token sayısı (`prompt_eval_count`) | 1012–1664 |
-| Yanıt kalitesi | **İnsan puanlaması henüz yapılmadı.** Doğruluk, kaynak desteği ve belirsizlik yönetimi için sayı yok. |
+| Yanıt kalitesi | İnsan puanlaması **yalnızca bu koşu için** yapıldı: toplam 64 / 80 ([`review_template.md`](experiments/first_model/review_template.md)). Diğer koşular puanlanmadı. |
 
 - Teknik tamamlanma, isteğin hatasız bittiğini gösterir; yanıtın doğru olduğunu
   göstermez.
@@ -68,7 +69,8 @@ A koşusu: `20260924T125755Z-A-7b0aaa`.
 | Gerekli ifadesi eksik vaka | 0 / 9 | 2 / 9 |
 
 - Bu metrikler **biçimseldir**. Teknik doğruluğu, kaynak desteğinin
-  gerçekliğini ve belirsizlik yönetimini ölçmez; insan puanlaması yapılmadı.
+  gerçekliğini ve belirsizlik yönetimini ölçmez. İnsan puanlaması yalnızca C
+  koşusu için yapıldı; A koşusu puanlanmadı.
 - Sezgisel kuralları, A metinlerini ve beklenen değerleri aynı kişi yazdı;
   karşılaştırma **A lehine yanlı** olabilir. C05, C06 ve C07'de sezgisel, aynı
   anlamı farklı sözcüklerle yazan C yanıtını en az bir kontrolde olumsuz saydı.
@@ -111,10 +113,51 @@ Sayılar 18 vakanın tamamı içindir.
 - Rapor ve vaka bazlı ayrıntı:
   [`ablation_uygunluk.md`](experiments/first_model/results_sample/ablation_uygunluk.md).
 
+### A / B / C karşılaştırması: arama ve LLM katkısı
+
+B modu = anlamsal arama + A'nın kural şablonu. C-arama = aynı arama + yerel LLM
+(`run.py --retrieval`). İki koşu 18 vakanın hepsinde aynı arama sonuçlarını ve
+aynı filtrelenmiş kaynakları kullandı (kayıtlar karşılaştırılarak doğrulandı).
+Aralarındaki fark yalnızca LLM'dir. Arama: `intfloat/multilingual-e5-small`
+(CPU), kosinüs benzerliği, top-k 3.
+
+Koşular: A `20260924T151833Z-A-84ccb9` (elle), B `20260925T142100Z-B-ee5add`,
+C-arama `20260925T142117Z-CR-0e7f03`. Gerekli kaynak tanımlı 12 vaka arama
+metriklerine girer.
+
+| Metrik | A (elle) | B (arama + kural) | C-arama (arama + LLM) |
+| --- | --- | --- | --- |
+| Recall@3 (gerekli kaynak) | uygulanamaz | 12 / 12 | 12 / 12 |
+| MRR | uygulanamaz | 0,764 | 0,764 |
+| Precision@3 | uygulanamaz | 12 / 36 | 12 / 36 |
+| Filtrenin elediği arama sonucu | uygulanamaz | 11 / 54 | 11 / 54 |
+| Durum doğru (metinden sezgisel) | 18 / 18 | 12 / 18 | 13 / 18 |
+| Gerekli ifadesi eksik vaka | 0 / 16 | 7 / 16 | 5 / 16 |
+| Arama hatası (2×2; 12 vaka) | uygulanamaz | 0 | 0 |
+| Üretim hatası (2×2; 12 vaka) | uygulanamaz | 6 | 0 |
+
+- **Arama gerekli kaynağı hiç kaçırmadı**, ama her vakaya fazladan kaynak getirdi.
+  B'nin 6 hatasının hepsi üretim hatasıdır: kural motoru fazladan gelen kaynaklarla
+  çakıştı (ör. C11–C13'te tarihsiz D2). Kural motoru dar, elle seçilmiş kaynak
+  listesi için yazılmıştır.
+- **C-arama bu 12 vakada hatasız**, ama gerekli kaynağı tanımsız 6 vakanın 5'inde
+  durumu yanlış türetildi. Bilgi isteme ve uzmana yönlendirme beklenen 5 vakanın
+  hiçbirinde bu durumu üretmedi.
+- **C18:** Arama, elle atamada olmayan doğru v1 kaynağını (D4) buldu. Cevap anahtarı
+  elle atamaya göre yazıldığı için bu vaka "yanlış" sayıldı.
+- **Sınırlar:** Metrikler yanıt kalitesini ölçmez; bu üç koşu insan tarafından
+  puanlanmadı (insan puanlaması yalnızca ilk C koşusu için yapıldı). 8 kaynak çok
+  küçük bir arama uzayıdır; gerçek RAG başarısı çıkarılamaz. Kaynakları, vakaları
+  ve beklentileri aynı kişi yazdı. 18 vakalık elle atamalı C koşusu yoktur.
+- Rapor: [`ABC_karsilastirma.md`](experiments/first_model/results_sample/ABC_karsilastirma.md).
+
 ## Hızlı başlangıç (Windows / PowerShell)
 
-Gereksinim: Python 3.12. Üçüncü taraf paket yoktur; yalnızca standart kütüphane
-kullanılır. Bu projede `python` yerine `py -3.12` kullanılıyor.
+Gereksinim: Python 3.12. A ve C modları, testler ve veri doğrulaması yalnızca
+standart kütüphaneyle çalışır. B modu ve `--retrieval` için tek üçüncü taraf
+bağımlılık vardır: `py -3.12 -m pip install -r requirements.txt`
+(`sentence-transformers`; gerekçe `docs/PROJECT.md` içinde). Bu projede `python`
+yerine `py -3.12` kullanılıyor.
 
 Testler ve veri doğrulaması model **gerektirmez**:
 
@@ -140,6 +183,14 @@ py -3.12 .\experiments\first_model\run.py
 bir hatayla durur. Her koşu `experiments/first_model/results/<run_id>/` altında
 yeni bir dizin oluşturur; bu dizin git'e girmez ve önceki sonuçlar ezilmez.
 
+B modu (arama + kural şablonu; Ollama gerekmez) ve aramalı C:
+
+```powershell
+py -3.12 -m pip install -r requirements.txt
+py -3.12 .\experiments\first_model\run.py --mode B
+py -3.12 .\experiments\first_model\run.py --retrieval
+```
+
 Linux/macOS'ta `py -3.12` yerine `python3.12` kullanın.
 
 Ayrıntılar: [`experiments/first_model/README.md`](experiments/first_model/README.md).
@@ -152,7 +203,8 @@ testlerini çalıştırır.
 
 **CI'da Ollama, model veya GPU yoktur.** CI yalnızca çalıştırıcının sahte
 servise karşı davranışını sınar. Model kalitesi veya gerçek model süreleri
-hakkında hiçbir şey göstermez.
+hakkında hiçbir şey göstermez. CI bağımlılık kurmaz ve embedding modeli
+indirmez; gerçek embedding modeli gerektiren testler orada atlanır.
 
 ## Bilinen sınırlar
 
@@ -161,8 +213,8 @@ hakkında hiçbir şey göstermez.
 - **Tasarımcı yanlılığı olabilir:** Kaynakları, vakaları ve cevap anahtarını
   aynı kişi hazırladı. Bu, değerlendirmeyi modelin lehine kolaylaştırmış
   olabilir.
-- **Örneklem küçüktür:** Yerel model 10 vakada, tek koşuyla ölçüldü. A modu 18
-  vakada çalıştırıldı. Buradan p95, SLA veya genel başarı oranı çıkarılamaz.
+- **Örneklem küçüktür:** Yerel model elle atamayla 10 vakada, aramayla 18 vakada
+  birer koşuyla ölçüldü. A ve B modu 18 vakada çalıştırıldı. Buradan p95, SLA veya genel başarı oranı çıkarılamaz.
 - **Yanıtlar deterministik değildir:** `temperature=0.7` ve sabit bir `seed`
   yok; aynı girdiyle tekrar çalıştırıldığında yanıtlar değişebilir.
 - **Testlerin kapsamı sınırlıdır:** Testler sahte servisle çalışır; çalıştırıcının
@@ -172,18 +224,23 @@ hakkında hiçbir şey göstermez.
 
 ## Yol haritası
 
-1. **İnsan puanlaması:** [`review_template.md`](experiments/first_model/review_template.md)
-   ile vakalar puanlanacak ve sonuç raporlanacak.
+1. **İnsan puanlaması — kısmen.** Yalnızca ilk C koşusu (C01–C10)
+   [`review_template.md`](experiments/first_model/review_template.md) ile
+   puanlandı. A, B ve aramalı C koşuları puanlanmadı.
 2. **Kural tabanlı temel yöntem — tamamlandı.** A modu (`run.py --mode A`)
    ve biçimsel makine kontrolleriyle A/C karşılaştırması yapıldı. LLM katkısının
-   **kalite** açısından ölçülmesi, 1. maddedeki insan puanlamasına bağlıdır ve
-   henüz yapılmadı.
+   **kalite** açısından karşılaştırılması, 1. maddedeki insan puanlamasının diğer
+   koşulara genişletilmesine bağlıdır ve yapılmadı.
 3. **Tarih/sürüm uygulanabilirlik motoru — tamamlandı.** Motor A ve C akışına
    bağlandı ve A modunda ablation ölçüldü. C modunda (yerel model) etkisi
    henüz ölçülmedi.
-4. **Daha sonra:** retrieval ve değerlendirme altyapısı.
+4. **Anlamsal arama ve A/B/C karşılaştırması — tamamlandı.** B modu,
+   `--retrieval`, Recall@k / MRR / Precision@k ve arama/üretim hata ayrımı.
+   8 kaynaklı küçük arama uzayında ölçüldü.
+5. **Daha sonra:** büyük kaynak kümesinde arama ve daha geniş değerlendirme
+   altyapısı.
 
-1. ve 4. maddeler henüz yapılmadı. Tam liste: [`docs/PROJECT.md`](docs/PROJECT.md)
+1. madde kısmen yapıldı; 5. madde yapılmadı. Tam liste: [`docs/PROJECT.md`](docs/PROJECT.md)
 → "Geleceğe bırakılan işler".
 
 ## Lisans

@@ -3,13 +3,17 @@
 Bu paket, yerel `qwen3:4b-instruct-2507-q4_K_M` modelinin Türkçe destek yanıtı
 taslağı üretirken nasıl davrandığını **ölçmek** içindir. Ürün kodu değildir.
 
-İki yol vardır ve aynı dört başlıklı çıktı sözleşmesini kullanırlar:
+Üç mod vardır ve aynı dört başlıklı çıktı sözleşmesini kullanırlar:
 
-- **C modu (varsayılan):** yerel model (Ollama).
+- **C modu (varsayılan):** yerel model (Ollama). Kaynaklar elle atanır;
+  `--retrieval` ile anlamsal aramayla seçilir.
 - **A modu:** modelden bağımsız, deterministik kural tabanlı temel yöntem
-  (`rules_mode.py`). Ollama'ya hiç istek göndermez.
+  (`rules_mode.py`). Kaynaklar elle atanır. Ollama'ya hiç istek göndermez.
+- **B modu:** anlamsal arama (`retrieval.py`) + A modunun kural şablonu. Ollama'ya
+  istek göndermez. B ile `C --retrieval` aynı arama sonuçlarını kullanır; aradaki
+  tek fark LLM'dir.
 
-İki modda da kaynaklar önce **uygunluk motorundan** (`applicability.py`) geçer.
+Tüm modlarda kaynaklar önce **uygunluk motorundan** (`applicability.py`) geçer.
 Motor, bir kaynağın vakanın API sürümüne ve olay tarihine uyup uymadığına karar
 verir. Varsayılan olarak açıktır; `--no-applicability` ile kapatılır.
 
@@ -21,7 +25,9 @@ Proje tanımı: [`../../docs/PROJECT.md`](../../docs/PROJECT.md)
 ```
 cases.jsonl (bir vaka)
         │
-        ├── source_ids ile docs.json'dan SEÇİLMİŞ kaynaklar
+        ├── A / C: source_ids ile docs.json'dan ELLE SEÇİLMİŞ kaynaklar
+        ├── B / C --retrieval: retrieval.py ile ARANAN ilk k kaynak
+        │       (sorgu: ticket + HTTP durumu + hata kodu; embeddings.json)
         │
         ▼
 applicability.py: sürüm + olay tarihi filtresi (UYGUN / UYGUN_DEGIL / BELIRSIZ)
@@ -40,7 +46,9 @@ results/<run_id>/cases.jsonl   (ham yanıt + ölçümler + hatalar)
 İNSAN değerlendirmesi  →  review_template.md
 ```
 
-A modunda `prompt.txt` → Ollama adımı yerine `rules_mode.py` çalışır; kurallar
+Sıra sabittir: **arama → uygunluk filtresi → kural motoru veya model.**
+
+A ve B modunda `prompt.txt` → Ollama adımı yerine `rules_mode.py` çalışır; kurallar
 yalnızca vakanın yapısal alanlarını ve filtreden geçen kaynak kimliklerini kullanır.
 
 `expected.jsonl` üretim akışının **dışındadır**. Çalıştırıcı (`run.py`) ve kural
@@ -66,11 +74,14 @@ yakaladığı da test edilir.
 | `cases.jsonl` | C01–C18; model girdileri + elle seçilmiş `source_ids`; C11–C18 ayrıca `olay_tarihi` taşır (C16 hariç) |
 | `expected.jsonl` | İnsan değerlendirme anahtarı ve `makine_kontrolleri` bloğu. **Üretim yoluna girmez.** |
 | `prompt.txt` | Tek, sürümlenebilir sistem yönergesi (`prompt_version: 1`) |
-| `run.py` | Sıralı çalıştırıcı (`--mode A` veya `C`); süre, token ve hata kaydı tutar |
+| `run.py` | Sıralı çalıştırıcı (`--mode A`, `B` veya `C`; `--retrieval`, `--top-k`); süre, token ve hata kaydı tutar |
+| `retrieval.py` | Anlamsal arama: e5-small ile kaynak önbelleği (`--build`) ve vaka başına ilk k kaynak; kosinüs, kesin arama |
+| `embeddings.json` | D1–D8 embedding önbelleği; `docs.json` SHA-256'sına bağlı |
+| `eval/retrieval_metrics.py` | Recall@k, MRR, Precision@k, filtre eleme sayısı ve arama/üretim hata ayrımı |
 | `applicability.py` | Uygunluk motoru: kaynak × API sürümü × olay tarihi → `UYGUN` / `UYGUN_DEGIL` / `BELIRSIZ` + gerekçe kodu |
 | `rules_mode.py` | A modu kural motoru; her kural D1–D8'deki kaynak cümlesine bağlıdır |
 | `eval/run_eval.py` | Sonuç dizinlerini makine kontrolleriyle karşılaştıran rapor betiği; model çağırmaz |
-| `review_template.md` | Boş insan puanlama tablosu ve rubrik |
+| `review_template.md` | İnsan puanlama tablosu ve rubrik; yalnızca ilk C koşusu (`661fd9`) için dolduruldu |
 | `tests/` | Sahte HTTP servisiyle çalışan davranış testleri, kural motoru ve değerlendirme testleri |
 | `results/` | Her çalışma için ayrı dizin (git'e girmez) |
 | `results_sample/` | İncelemeye açık, kullanıcı adı maskelenmiş örnek koşular: C modu ([`NOT.md`](results_sample/20260923T214519Z-661fd9/NOT.md)), A modu ([`NOT.md`](results_sample/20260924T125755Z-A-7b0aaa/NOT.md)) ve ikisinin karşılaştırma raporu ([`AC_karsilastirma.md`](results_sample/AC_karsilastirma.md)) |
@@ -102,10 +113,18 @@ Uygunluk motoru kapalı (ablation; kaynaklar filtrelenmez):
 py -3.12 .\experiments\first_model\run.py --mode A --no-applicability
 ```
 
-Değerlendirme raporu (bir veya iki sonuç dizini; model çağırmaz):
+B modu ve aramalı C (anlamsal arama; kurulum ve önbellek için aşağıya bakın):
 
 ```powershell
-py -3.12 .\experiments\first_model\eval\run_eval.py <A_sonuc_dizini> <C_sonuc_dizini> --out rapor.md
+py -3.12 .\experiments\first_model\run.py --mode B               # top-k varsayılan 3
+py -3.12 .\experiments\first_model\run.py --mode B --top-k 2
+py -3.12 .\experiments\first_model\run.py --retrieval            # C + aynı arama
+```
+
+Değerlendirme raporu (bir, iki veya üç sonuç dizini; model çağırmaz):
+
+```powershell
+py -3.12 .\experiments\first_model\eval\run_eval.py <A_dizini> <B_dizini> <C_dizini> --out rapor.md
 ```
 
 Yalnızca veri doğrulaması (modele istek göndermeden):
@@ -119,6 +138,40 @@ Testler:
 ```powershell
 py -3.12 -m unittest discover -s .\experiments\first_model\tests -p "test_*.py" -v
 ```
+
+## B modu ve anlamsal arama
+
+Sözleşmenin tamamı: [`EXPERIMENT_SPEC.md` §8.6](../../docs/EXPERIMENT_SPEC.md).
+
+**Kurulum (yalnızca B ve `--retrieval` için):** Projenin tek üçüncü taraf
+bağımlılığıdır. A ve C (elle) modları ve testlerin çoğu paket olmadan çalışır.
+
+```powershell
+py -3.12 -m pip install -r requirements.txt
+```
+
+Paket yoksa B modu çıkış kodu 2 ile durur ve bu komutu gösterir.
+
+**Önbellek üretimi:** `embeddings.json` repoda vardır. `docs.json` değişirse
+geçersiz olur; çalıştırıcı sonuç dizini açmadan çıkış kodu 2 ile durur. Yeniden
+üretmek için (model yerelde yoksa Hugging Face'ten bir kez indirilir; bu makinede
+indirilen dosyalar 470 MiB tuttu):
+
+```powershell
+py -3.12 .\experiments\first_model\retrieval.py --build
+```
+
+Çalıştırıcı modeli **yalnızca yerelden** yükler; indirmez.
+
+- Model: `intfloat/multilingual-e5-small`, CPU. Önekler: kaynak `passage: `, sorgu
+  `query: `.
+- Benzerlik: normalize vektörlerde kosinüs (iç çarpım), 8 kaynakla kesin
+  karşılaştırma. İndeks, vektör veritabanı, hibrit arama ve reranker yoktur.
+- Sorgu: `ticket`, `response.http_status` ve `response.error_code` alanlarıdır. Not
+  alanları, `debug_note`, başlıklar, sürüm ve tarih sorguya girmez.
+- Vaka kaydı: `kaynak_secimi`, `arama_sonuclari` (sıralı kaynak + skor),
+  `arama_suresi_s`. `run_meta.json → arama`: `retrieval.py` SHA-256, model, top-k,
+  önbellek özeti.
 
 ## Uygunluk motoru
 
@@ -346,13 +399,16 @@ başlamadan** tek hatayla durur.
 
 ## Bu deneyin ÖLÇMEDİĞİ şeyler
 
-- Kaynak arama başarısı ve RAG katkısı — kaynaklar her vaka için **elle**
-  seçilmiştir (`source_ids`).
+- Gerçek RAG başarısı — B modu ve `--retrieval` 8 kaynaklı çok küçük bir arama
+  uzayında ölçüldü. Arama metrikleri yalnızca kaynak kimliği düzeyindedir; yanıt
+  kalitesini ölçmez.
 - Tarih/sürüm uygulanabilirliğinin gerçek dokümanlarda doğruluğu — motor
   yalnızca kurgusal D1–D8 ve elle yazılmış C01–C18 ile sınandı. Olay tarihi ve
   sürüm vakada açıkça verilir; metinden çıkarılmaz.
 - Kural tabanlı temel yönteme göre **yanıt kalitesi** farkı — A ve C yalnızca
-  biçimsel makine kontrolleriyle karşılaştırıldı; insan puanlaması yapılmadı.
+  biçimsel makine kontrolleriyle karşılaştırıldı. İnsan puanlaması yalnızca ilk C
+  koşusu (`20260923T214519Z-661fd9`, C01–C10) için yapıldı; A, B ve aramalı C
+  koşuları puanlanmadı.
 - Prompt-injection güvenliği — C10 tek bir örnektir, kapsamlı kanıt değildir.
 - Gerçek müşteri verisinde davranış — tüm veri kurgusaldır.
 

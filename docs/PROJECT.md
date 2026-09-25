@@ -16,7 +16,7 @@ Sistem müşteriye kendiliğinden mesaj göndermez.
 2. **429** — istek sınırı.
 3. **Sayfalama** — eksik kayıt ve sürüme uygun devam yöntemi.
 
-## Mevcut aşama (24 Eylül 2026)
+## Mevcut aşama (25 Eylül 2026)
 
 **Aşama 1 — İlk yerel model deneyi.** Kontrollü kaynaklar ve geliştirme
 vakalarıyla yerel modelin davranışını ölçüyoruz. İlk koşu D1–D3 ve C01–C10 ile
@@ -32,7 +32,9 @@ Aşama 1 içindeki durum:
 | A/C karşılaştırması ([`AC_karsilastirma.md`](../experiments/first_model/results_sample/AC_karsilastirma.md)) | Yalnızca biçimsel makine kontrolleriyle yapıldı |
 | Uygunluk motoru (`applicability.py`): sürüm ve olay tarihine göre kaynak filtresi, `--no-applicability` | Tamamlandı |
 | Uygunluk ablation ölçümü ([`ablation_uygunluk.md`](../experiments/first_model/results_sample/ablation_uygunluk.md)) | Yalnızca A modunda yapıldı; C modu yeniden çalıştırılmadı |
-| İnsan puanlaması (`review_template.md`) | **Yapılmadı** |
+| B modu ve anlamsal arama (`retrieval.py`), C `--retrieval`, arama metrikleri | Tamamlandı |
+| A/B/C karşılaştırması ([`ABC_karsilastirma.md`](../experiments/first_model/results_sample/ABC_karsilastirma.md)) | Yalnızca makine kontrolleri ve arama metrikleriyle yapıldı |
+| İnsan puanlaması (`review_template.md`) | **Yalnızca ilk C koşusu** (`20260923T214519Z-661fd9`, C01–C10) için yapıldı; diğer koşular puanlanmadı |
 
 Makine kontrolleri yanıtın teknik doğruluğunu, kaynak desteğinin gerçekliğini ve
 belirsizlik yönetimini ölçmez. "LLM gerekli mi?" sorusu insan puanlaması
@@ -42,8 +44,10 @@ Bu aşamanın tanımı, veri içeriği ve kabul ölçütleri
 [`EXPERIMENT_SPEC.md`](EXPERIMENT_SPEC.md) dosyasındadır.
 Uygulama `experiments/first_model/` altındadır.
 
-Bu aşamada **kaynaklar her vaka için elle seçilmiştir**. Dolayısıyla kaynak arama
-başarısı ve RAG katkısı ölçülmemektedir.
+A ve C modunda **kaynaklar her vaka için elle seçilir**. B modu ve C `--retrieval`
+kaynakları anlamsal aramayla seçer; B ile C `--retrieval` aynı arama sonuçlarını
+kullanır, aradaki fark yalnızca LLM'dir. Arama yalnızca 8 kaynaklı küçük bir uzayda
+ölçüldü; gerçek RAG başarısı ölçülmüş sayılmaz.
 
 Doğrulanmış ortam (kullanıcının terminal çıktılarıyla):
 
@@ -72,6 +76,32 @@ Bu nedenle bu projede **`think` alanı, `/no_think` ve özel model şablonu
 kullanılmaz**. Model bulunamazsa açık hata verilir; sessizce başka modele
 geçilmez, otomatik indirme yapılmaz.
 
+### Bağımlılık kararı: anlamsal arama (25 Eylül 2026)
+
+Proje o güne kadar yalnızca Python standart kütüphanesini kullanıyordu. B modu ve
+`--retrieval` için bu ilke **bilinçli olarak** bırakıldı ve ilk üçüncü taraf
+bağımlılığı eklendi: `sentence-transformers` (sürümler `requirements.txt`'te
+sabitlidir).
+
+- **Neden bağımlılık:** Anlamsal arama için bir embedding modeli gerekir. Standart
+  kütüphaneyle yazılabilecek anahtar sözcük eşleşmesi, "arama doğru kaynağı buluyor
+  mu?" sorusunu RAG sistemlerinde kullanılan yöntemle ölçmez.
+- **Neden `intfloat/multilingual-e5-small`:** Türkçe dahil çok dilli, küçük
+  (384 boyut; bu makinede indirilen dosyalar 470 MiB) ve açık lisanslı bir model.
+  Önek kuralı (`query: ` / `passage: `) model kartında belirtilmiştir ve kodda
+  uygulanır.
+- **Neden CPU:** GPU'nun 6 GiB VRAM'i yerel dil modeline ayrılmıştır. 8 kaynak ve
+  18 kısa sorgu için CPU yeterlidir. Arama süresi her vaka kaydında ölçülür.
+- **İzolasyon:** Paket modül düzeyinde içe aktarılmaz. Yalnızca embedding modeli
+  yüklenirken (`retrieval.load_embedder`) fonksiyon içinde yüklenir. Paket yoksa B
+  modu ve `--retrieval` kurulum komutunu göstererek çıkış kodu 2 ile durur. A ve C
+  (elle) modları ve testlerin çoğu paket olmadan çalışır. Bu, `site-packages`
+  kapalıyken (`py -3.12 -S`) test paketinin çalıştırılmasıyla doğrulandı: gerçek
+  model gerektiren 2 test atlandı, diğerleri geçti. CI bağımlılık kurmaz ve model
+  indirmez.
+- **Tek yöntem:** Kosinüs benzerliğiyle kesin arama. İndeks, vektör veritabanı,
+  hibrit arama, reranker ve sorgu yeniden yazma eklenmedi.
+
 ## Öğrenme hedefi
 
 Kullanıcı Python biliyor; uygulamalı AI mühendisliği kavramlarını bu proje
@@ -92,7 +122,9 @@ Kullanıcı Python biliyor; uygulamalı AI mühendisliği kavramlarını bu proj
 
 Aşağıdakiler bilinçli olarak yapılmamıştır ve tamamlanmış sayılmamalıdır:
 
-- Kaynak arama, embedding, vektör indeksi, RAG.
+- Vektör indeksi veya veritabanı, hibrit arama, reranker, sorgu yeniden yazma ve
+  büyük kaynak kümesinde RAG. (8 kaynaklı anlamsal arama ve B modu yapıldı; bkz.
+  aşama tablosu.)
 - Olay tarihini veya API sürümünü destek talebi metninden çıkarma. Motor bu
   bilgileri yalnızca vakanın yapısal alanlarından okur.
 - Uygunluk motorunun C modundaki (yerel model) etkisinin ölçülmesi. Motor C
@@ -100,8 +132,8 @@ Aşağıdakiler bilinçli olarak yapılmamıştır ve tamamlanmış sayılmamal�
 - Saat düzeyinde yürürlük ve saat dilimi mantığı (motor yalnızca gün düzeyinde
   çalışır).
 - Büyük dosyaların bölünmesi (500 satır üstü; bölünmesi önerilir, yapılmadı):
-  `run.py` 1046, `tests/test_runner.py` 1009, `eval/run_eval.py` 712,
-  `rules_mode.py` 696 satır.
+  `run.py` 1107, `tests/test_runner.py` 1009, `eval/run_eval.py` 743,
+  `rules_mode.py` 696, `tests/test_retrieval.py` 561 satır.
 - LLM/RAG katkısının kural tabanlı temel yöntemle **insan puanlamasına dayalı**
   karşılaştırılması. Temel yöntem (A modu) ve biçimsel karşılaştırma vardır; kalite
   karşılaştırması yoktur.

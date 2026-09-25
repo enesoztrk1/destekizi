@@ -417,8 +417,10 @@ class RealDataTest(unittest.TestCase):
         ev = run_eval.evaluate_run(run_eval.load_run(run_dir), expected)
         n = len(expected)
         self.assertEqual(ev["teknik_tamamlanan"], n)
-        self.assertEqual(ev["durum"], (n, n))
-        self.assertEqual(ev["aile"], (n, n))
+        # Kontrolu tanimli her vaka gecer (C18'de durum/aile kontrolu yoktur).
+        self.assertEqual(ev["durum"][0], ev["durum"][1])
+        self.assertEqual(ev["aile"][0], ev["aile"][1])
+        self.assertGreaterEqual(ev["durum"][1], n - 1)
         self.assertEqual(ev["yasak_ifade"][0], 0)
         self.assertEqual(ev["gerekli_ifade"][0], 0)
         # Uygunluk: motor acik varsayilan kosuda beklenen her karar ve gerekce tutar;

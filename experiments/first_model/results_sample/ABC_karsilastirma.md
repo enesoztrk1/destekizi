@@ -69,6 +69,11 @@ Ayrıntılı tablo aşağıdaki ekte vardır. Özet:
   Ancak cevap anahtarı elle atamaya göre `uzman_incelemesi` beklediği için
   C-arama bu vakada "yanlış" sayıldı. Bu vaka arama koşullarında cevap anahtarının
   sınırını gösterir.
+  *Sonradan düzeltildi:* C18'in makine anahtarından `beklenen_durum` ve
+  `beklenen_aile` kaldırıldı (commit "fix(deney): C18 …"). Bu rapordaki sayılar ve
+  ekteki çıktı eski anahtarla üretildi. Yeni anahtarla durum doğru: A 17'de 17, B
+  17'de 11, C-arama 17'de 13; aile doğru: A 17'de 17, B 17'de 17, C-arama 17'de 11.
+  Diğer metrikler değişmedi.
 - **C11–C13, kötü yönde fark (B için).** Arama, tarihsiz genel D2'yi
   (`Retry-After`) tarihli D6/D7'nin yanına ekledi. D2'nin tarihi yok (`BELIRSIZ`,
   `kaynak_tarihi_yok`), bu yüzden filtreden geçti. Kural motoru iki çelişen bekleme
@@ -108,6 +113,56 @@ gerekli kaynağı tanımlı 12 vaka girer.
 - C10'da (prompt injection vakası) C-arama yanıtında yasaklı "süresi doldu" ifadesi
   alt dize olarak geçti. Bu eşleşme soru cümlesi içinde de olabilir; ifade kontrolü
   anlamı ölçmez. Talimatın uygulanıp uygulanmadığı insan okumasıyla belirlenmelidir.
+
+## top-k seçimi (yalnızca B modu)
+
+B modu k = 1, 2 ve 3 ile yeniden çalıştırıldı. Kod, önbellek ve vakalar aynıydı.
+Sayılar düzeltilmiş C18 anahtarıyla hesaplandı; C18'de durum ve aile kontrol
+edilmez, bu yüzden paydalar 17'dir. C modu bu ölçümde çalıştırılmadı.
+
+| Metrik | k = 1 | k = 2 | k = 3 |
+| --- | --- | --- | --- |
+| Koşu | [`…B-354c5c`](20260925T153054Z-B-354c5c/NOT.md) | [`…B-4f042d`](20260925T153109Z-B-4f042d/NOT.md) | [`…B-5a7fda`](20260925T153123Z-B-5a7fda/NOT.md) |
+| Recall@k (12 gerekli kaynak) | 7 | 10 | 12 |
+| Precision@k | 12'de 7 | 24'te 10 | 36'da 12 |
+| MRR@k (12 vaka) | 0.583 | 0.708 | 0.764 |
+| Filtrenin elediği arama sonucu | 18'de 2 | 36'da 7 | 54'te 11 |
+| Durum doğru | 17'de 12 | 17'de 12 | 17'de 11 |
+| Aile doğru | 17'de 14 | 17'de 17 | 17'de 17 |
+| Gerekli ifadesi eksik vaka | 16'da 5 | 16'da 6 | 16'da 7 |
+| Arama hatası (2×2; ulaşmadı + yanlış) | 5: C02, C07, C11, C12, C13 | 2: C12, C13 | 0 |
+| Üretim hatası (2×2; ulaştı + yanlış) | 0 | 3: C04, C11, C15 | 6: C02, C04, C11, C12, C13, C15 |
+
+MRR ilk k ile sınırlıdır: gerekli kaynak ilk k'da değilse RR 0 sayılır. Bu yüzden
+MRR de k ile değişir.
+
+**Beklentiyle karşılaştırma.** Precision k küçüldükçe arttı, Recall düştü;
+bu kısım beklendiği gibi. Durum doğruluğu ise **anlamlı biçimde artmadı**:
+12, 12, 11. k'yı küçültmek toplam hatayı azaltmadı; hatayı üretimden aramaya
+kaydırdı. 2×2 tablosunda toplam hata k=1'de 5, k=2'de 5, k=3'te 6'dır.
+
+- C11–C13 her k'da yanlış. Tarihsiz genel D2, tarihli D6/D7'den daha yüksek skor
+  alıyor. k ≤ 2'de doğru tarihli kaynak listeye giremiyor (arama hatası).
+  k = 3'te giriyor ama D2 ile çelişiyor (üretim hatası). C13'te k = 1 ile tek
+  sonuç D6'dır; filtre onu eler ve hiç kaynak kalmaz.
+- C02 ve C07'de gerekli kaynak ikinci sıradadır. k = 1'de kaçar; k = 2'de doğru
+  sonuç çıkar.
+- C04 ve C15'te k = 1 doğru, k ≥ 2 yanlıştır. Eklenen ikinci kaynak kural
+  motorunu çelişkiye düşürüyor.
+
+**Öneri (yalnızca bu 8 kaynak ve 18 vakalık sette ölçüldü; genel kural değildir).**
+Bu sette, varsayılan k = 3 aramalı koşular için daha uygundur. Nedenleri:
+
+- Gerekli kaynakların hepsinin üretime ulaştığı tek değer k = 3'tür (12'de 12).
+- Aynı k = 3 sonuçlarıyla C-arama'da üretim hatası 0 oldu.
+- B'nin k = 3 hataları arama kaynaklı değil. Kural motoru birden fazla kaynağı
+  birleştiremiyor.
+
+Bu hataları k'yı düşürerek değil, kural motorunda düzeltmek gerekir; k'yı
+düşürmek aynı sayıda hatayı arama tarafına taşıyor. Yalnızca B modu için k = 2,
+durum doğruluğunda k = 3'ten 1 vaka ve ailede k = 1'den 3 vaka iyidir. Ancak 1
+vakalık fark bu örneklemde anlamlı sayılmaz. k = 1 ve 2 C modunda ölçülmedi.
+Varsayılan değiştirilmedi.
 
 ## Sınırlar
 

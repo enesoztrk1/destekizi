@@ -29,7 +29,8 @@ if HAS_API_DEPS:
     from fastapi.testclient import TestClient
 
     import api
-    import run
+    import inputs
+    import pipeline
 
 from fake_ollama import FakeOllama  # noqa: E402
 from test_masking import SECRETS, secret_case  # noqa: E402
@@ -175,7 +176,7 @@ class ModelErrorTest(ApiTestBase):
 
     def test_unexpected_error_hides_internals(self) -> None:
         client = self.client()
-        with mock.patch.object(run, "analyze_case", side_effect=RuntimeError("IC_AYRINTI C:/gizli/yol")), \
+        with mock.patch.object(pipeline, "analyze_case", side_effect=RuntimeError("IC_AYRINTI C:/gizli/yol")), \
                 self.assertLogs("destekizi.api", level="ERROR") as logs:
             resp = client.post("/v1/analyses", json={"mod": "A", "case_id": "C01"})
         self.assertEqual(resp.status_code, 500)
@@ -202,9 +203,9 @@ class AnalysisTest(ApiTestBase):
         # Cikti sozlesmesi: kayittaki analiz sonucunun aynisi (zaman alanlari haric).
         resp = self.client().post("/v1/analyses", json={"mod": "A", "case_id": "C14"})
         self.assertEqual(resp.status_code, 200, resp.text)
-        case = run.load_cases(EXPERIMENT_DIR / "cases.jsonl")[13]
-        expected = run.analyze_case(
-            case, mode="A", sources=run.load_sources(EXPERIMENT_DIR / "docs.json"), system_prompt="",
+        case = inputs.load_cases(EXPERIMENT_DIR / "cases.jsonl")[13]
+        expected = pipeline.analyze_case(
+            case, mode="A", sources=inputs.load_sources(EXPERIMENT_DIR / "docs.json"), system_prompt="",
             retriever=None, applicability_on=True, host="", model="", options={}, timeout=1,
         )
         got = resp.json()

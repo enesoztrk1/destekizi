@@ -1,7 +1,7 @@
 """Destekizi - vaka verisinde hassas deger maskeleme.
 
 Vaka okunduktan hemen sonra, aramaya, uygunluk filtresine, kural motoruna, modele
-ve kayda gitmeden ONCE uygulanir (run.analyze_case'in ilk adimi).
+ve kayda gitmeden ONCE uygulanir (pipeline.analyze_case'in ilk adimi).
 
 Maskelenenler:
     - Hassas HTTP basliklari (buyuk/kucuk harf duyarsiz sozluk anahtari olarak):

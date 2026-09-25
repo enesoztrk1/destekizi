@@ -14,7 +14,7 @@ Bagimlilik: sentence-transformers yalnizca embedding modeli yuklenirken, fonksiy
 icinde (tembel) ice aktarilir. Bu modulu ice aktarmak paketi GEREKTIRMEZ; A ve C
 modlari paket olmadan calisir.
 
-Sira (run.py): arama -> uygunluk filtresi -> kural motoru veya model.
+Sira (pipeline.py): arama -> uygunluk filtresi -> kural motoru veya model.
 
 Kullanim (onbellegi uretir; model yerelde yoksa bir kez indirir):
     py -3.12 experiments/first_model/retrieval.py --build

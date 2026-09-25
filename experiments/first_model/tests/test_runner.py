@@ -28,6 +28,9 @@ if str(EXPERIMENT_DIR) not in sys.path:
 if str(Path(__file__).resolve().parent) not in sys.path:
     sys.path.insert(0, str(Path(__file__).resolve().parent))
 
+import inputs  # noqa: E402
+import model_client  # noqa: E402
+import pipeline  # noqa: E402
 import run  # noqa: E402
 from fake_ollama import FakeOllama  # noqa: E402
 
@@ -254,8 +257,8 @@ class AnswerKeyIsolationTest(unittest.TestCase):
         self.assertEqual(code, 0)
 
     def test_read_text_refuses_the_answer_key(self) -> None:
-        with self.assertRaises(run.ExperimentError):
-            run.read_text(EXPERIMENT_DIR / "expected.jsonl")
+        with self.assertRaises(inputs.ExperimentError):
+            inputs.read_text(EXPERIMENT_DIR / "expected.jsonl")
 
     def test_audit_guard_catches_a_deliberate_open_attempt(self) -> None:
         # Denetimin kendisi calisiyor mu? Kasitli girisim engellenmeli ve kaydedilmeli.
@@ -306,11 +309,11 @@ class AnswerKeyIsolationTest(unittest.TestCase):
             os.link(fake_key, link)
         except OSError as exc:
             self.skipTest(f"hard link olusturulamadi: {exc}")
-        with mock.patch.object(run, "ANSWER_KEY_PATH", fake_key):
-            with self.assertRaisesRegex(run.ExperimentError, "Cevap anahtari"):
-                run.read_text(link)
-            with self.assertRaisesRegex(run.ExperimentError, "Cevap anahtari"):
-                run.sha256_file(link)
+        with mock.patch.object(inputs, "ANSWER_KEY_PATH", fake_key):
+            with self.assertRaisesRegex(inputs.ExperimentError, "Cevap anahtari"):
+                inputs.read_text(link)
+            with self.assertRaisesRegex(inputs.ExperimentError, "Cevap anahtari"):
+                inputs.sha256_file(link)
 
     def test_case_variant_name_is_refused(self) -> None:
         tmp = Path(tempfile.mkdtemp(prefix="destekizi_test_"))
@@ -318,13 +321,13 @@ class AnswerKeyIsolationTest(unittest.TestCase):
         variant = tmp / "Expected.JSONL"
         variant.write_text("{}\n", encoding="utf-8")  # var olan dosya: ret sebebi ad olmali
 
-        with self.assertRaisesRegex(run.ExperimentError, "Cevap anahtari"):
-            run.read_text(variant)
+        with self.assertRaisesRegex(inputs.ExperimentError, "Cevap anahtari"):
+            inputs.read_text(variant)
 
     def test_identity_check_error_fails_closed(self) -> None:
-        with mock.patch.object(run.os.path, "samefile", side_effect=OSError("erisim yok")):
-            with self.assertRaises(run.ExperimentError):
-                run.read_text(EXPERIMENT_DIR / "prompt.txt")
+        with mock.patch.object(inputs.os.path, "samefile", side_effect=OSError("erisim yok")):
+            with self.assertRaises(inputs.ExperimentError):
+                inputs.read_text(EXPERIMENT_DIR / "prompt.txt")
 
 
 class FailureClassificationTest(unittest.TestCase):
@@ -434,7 +437,7 @@ class ResultDirectoryTest(unittest.TestCase):
         workspace = make_workspace(real_case_lines(["C01", "C02", "C03"]))
         self.addCleanup(shutil.rmtree, workspace, True)
 
-        real_observe = run.mechanical_observations
+        real_observe = pipeline.mechanical_observations
         calls: list[int] = []
 
         def fail_on_second_case(content):
@@ -443,7 +446,7 @@ class ResultDirectoryTest(unittest.TestCase):
                 raise RuntimeError("beklenmeyen hata")
             return real_observe(content)
 
-        with mock.patch.object(run, "mechanical_observations", fail_on_second_case), \
+        with mock.patch.object(pipeline, "mechanical_observations", fail_on_second_case), \
                 FakeOllama([{"kind": "ok"}]) as fake:
             with self.assertRaisesRegex(RuntimeError, "beklenmeyen hata"):  # yutulmamali
                 run_main(workspace, fake, ["--no-warmup"])
@@ -468,7 +471,7 @@ class ResultDirectoryTest(unittest.TestCase):
         def broken_writer(run_dir, summary):
             raise OSError("disk dolu")
 
-        with mock.patch.object(run, "mechanical_observations", boom), \
+        with mock.patch.object(pipeline, "mechanical_observations", boom), \
                 mock.patch.object(run, "_write_summary", broken_writer), \
                 FakeOllama([{"kind": "ok"}]) as fake:
             buffer = io.StringIO()
@@ -680,9 +683,9 @@ class NonStandardNumberTest(unittest.TestCase):
     def test_strict_reader_rejects_each_non_standard_form(self) -> None:
         for text in ('{"a": NaN}', '{"a": Infinity}', '{"a": -Infinity}', '{"a": 1e999}',
                      '{"a": -1e999}'):
-            with self.subTest(text=text), self.assertRaises(run.NonStandardJSONNumber):
-                run.loads_strict(text)
-        self.assertEqual(run.loads_strict('{"a": 1.5, "b": 2}'), {"a": 1.5, "b": 2})
+            with self.subTest(text=text), self.assertRaises(model_client.NonStandardJSONNumber):
+                model_client.loads_strict(text)
+        self.assertEqual(model_client.loads_strict('{"a": 1.5, "b": 2}'), {"a": 1.5, "b": 2})
 
 
 class WarmupStatusTest(unittest.TestCase):
@@ -806,7 +809,7 @@ class TimestampAndMetadataTest(unittest.TestCase):
         self.addCleanup(shutil.rmtree, workspace, True)
 
         events: list[str] = []
-        real_chat_once = run.chat_once
+        real_chat_once = pipeline.chat_once
 
         def fake_clock() -> str:
             events.append("clock")
@@ -818,7 +821,8 @@ class TimestampAndMetadataTest(unittest.TestCase):
 
         behaviors = [{"kind": "ok"}, {"kind": "http_error", "status": 500}]
         with mock.patch.object(run, "_utc_now", fake_clock), \
-                mock.patch.object(run, "chat_once", spy_chat_once), \
+                mock.patch.object(pipeline, "_utc_now", fake_clock), \
+                mock.patch.object(pipeline, "chat_once", spy_chat_once), \
                 FakeOllama(behaviors) as fake:
             code, output = run_main(workspace, fake, ["--no-warmup"])
         self.assertEqual(code, 0, output)

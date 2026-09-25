@@ -510,7 +510,7 @@ yanlış* arama veya filtre hatasıdır.
 
 **Akıştaki yeri:** Vaka okunduktan hemen sonra, her şeyden önce. Sıra:
 oku → **maskele** → arama → uygunluk filtresi → kural motoru veya model. Maskeleme
-`run.analyze_case`'in ilk adımıdır. Çalıştırıcı (`run.py`) ve servis (`api.py`)
+`pipeline.analyze_case`'in ilk adımıdır. Çalıştırıcı (`run.py`) ve servis (`api.py`)
 aynı fonksiyonu kullanır. Arama sorgusu, kurallar, modele giden mesaj
 (`messages`) ve `cases.jsonl` kaydı yalnızca maskelenmiş vakayı görür.
 
@@ -558,13 +558,13 @@ gizler; hassas verinin tamamen temizlendiğine dair bir güvence değildir.
 
 ### 8.8 HTTP servis sözleşmesi (`api.py`)
 
-İnce bir katmandır: iş mantığı `run.analyze_case`, `masking.py`, `retrieval.py`
+İnce bir katmandır: iş mantığı `pipeline.analyze_case`, `masking.py`, `retrieval.py`
 ve `applicability.py` içindedir. FastAPI yalnızca `api.py`'de içe aktarılır.
 Bağımlılıklar `requirements-api.txt` dosyasındadır.
 
 | Uç nokta | İş |
 | --- | --- |
-| `POST /v1/analyses` | Analiz. Gövde: `mod` (`"A"`, `"B"`, `"C"`), `vaka` (`cases.jsonl` satırıyla aynı yapı) **veya** `case_id` (geliştirme vakası), isteğe bağlı `uygunluk_motoru` (varsayılan `true`) ve `top_k` (varsayılan 3, yalnızca B). Yanıt: vaka kaydının aynısı (`run.analyze_case` çıktısı). |
+| `POST /v1/analyses` | Analiz. Gövde: `mod` (`"A"`, `"B"`, `"C"`), `vaka` (`cases.jsonl` satırıyla aynı yapı) **veya** `case_id` (geliştirme vakası), isteğe bağlı `uygunluk_motoru` (varsayılan `true`) ve `top_k` (varsayılan 3, yalnızca B). Yanıt: vaka kaydının aynısı (`pipeline.analyze_case` çıktısı). |
 | `GET /v1/sources/{id}` | Kaynağın metni ve metadata'sı (`title`, `api_versions`, `valid_from`, `valid_to` …) |
 | `GET /health` | Bileşenleri yoklar: kaynak verisi (`docs.json` yeniden okunur ve özet karşılaştırılır), Ollama (`/api/version` ve `/api/tags`, model listede mi), arama (paket var mı, önbellek geçerli mi) |
 
